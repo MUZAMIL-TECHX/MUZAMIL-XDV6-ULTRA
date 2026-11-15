@@ -20,45 +20,74 @@ const channelInfo = {
     }
 };
 
+// ===============================
+// 🛠️ HELPERS
+// ===============================
+
 async function addReaction(sock, message, emoji) {
     try {
         await sock.sendMessage(message.key.remoteJid, {
             react: { text: emoji, key: message.key }
         });
-    } catch (error) {
-        console.error('Reaction error:', error);
+    } catch (e) {
+        console.error('Reaction error:', e);
     }
 }
 
 function unwrapMessage(message) {
     let current = message;
-    while (current?.ephemeralMessage?.message) current = current.ephemeralMessage.message;
-    while (current?.viewOnceMessage?.message) current = current.viewOnceMessage.message;
-    while (current?.viewOnceMessageV2?.message) current = current.viewOnceMessageV2.message;
-    while (current?.viewOnceMessageV2Extension?.message) current = current.viewOnceMessageV2Extension.message;
+    let guard = 0;
+    while (current && guard++ < 10) {
+        if (current.ephemeralMessage?.message) { current = current.ephemeralMessage.message; continue; }
+        if (current.viewOnceMessage?.message) { current = current.viewOnceMessage.message; continue; }
+        if (current.viewOnceMessageV2?.message) { current = current.viewOnceMessageV2.message; continue; }
+        if (current.viewOnceMessageV2Extension?.message) { current = current.viewOnceMessageV2Extension.message; continue; }
+        if (current.documentWithCaptionMessage?.message) { current = current.documentWithCaptionMessage.message; continue; }
+        if (current.editedMessage?.message) { current = current.editedMessage.message; continue; }
+        break;
+    }
     return current || {};
 }
 
-function quotedMessageOf(message) {
-    const contextInfo =
-        message?.message?.extendedTextMessage?.contextInfo ||
-        message?.message?.imageMessage?.contextInfo ||
-        message?.message?.videoMessage?.contextInfo ||
-        message?.message?.audioMessage?.contextInfo ||
-        message?.message?.documentMessage?.contextInfo ||
-        {};
-    return unwrapMessage(contextInfo.quotedMessage);
+// ✅ view-once detect — wrapper YA inner flag
+function isViewOnce(rawQuoted) {
+    if (!rawQuoted || typeof rawQuoted !== 'object') return false;
+    if (rawQuoted.viewOnceMessage) return true;
+    if (rawQuoted.viewOnceMessageV2) return true;
+    if (rawQuoted.viewOnceMessageV2Extension) return true;
+    const inner = unwrapMessage(rawQuoted);
+    return Boolean(
+        inner?.imageMessage?.viewOnce ||
+        inner?.videoMessage?.viewOnce ||
+        inner?.audioMessage?.viewOnce ||
+        inner?.documentMessage?.viewOnce
+    );
 }
 
-function messageContextInfo(message) {
+function getContextInfo(message) {
+    const m = message?.message || {};
     return (
-        message?.message?.extendedTextMessage?.contextInfo ||
-        message?.message?.imageMessage?.contextInfo ||
-        message?.message?.videoMessage?.contextInfo ||
-        message?.message?.audioMessage?.contextInfo ||
-        message?.message?.documentMessage?.contextInfo ||
+        m.extendedTextMessage?.contextInfo ||
+        m.imageMessage?.contextInfo ||
+        m.videoMessage?.contextInfo ||
+        m.audioMessage?.contextInfo ||
+        m.documentMessage?.contextInfo ||
+        m.stickerMessage?.contextInfo ||
+        m.buttonsResponseMessage?.contextInfo ||
+        m.listResponseMessage?.contextInfo ||
+        m.templateButtonReplyMessage?.contextInfo ||
         {}
     );
+}
+
+function quotedMessageOf(message) {
+    const ctx = getContextInfo(message);
+    return unwrapMessage(ctx?.quotedMessage || {});
+}
+
+function rawQuotedOf(message) {
+    const ctx = getContextInfo(message);
+    return ctx?.quotedMessage || {};
 }
 
 async function downloadMedia(media, type) {
@@ -67,91 +96,69 @@ async function downloadMedia(media, type) {
         const chunks = [];
         for await (const chunk of stream) chunks.push(chunk);
         return Buffer.concat(chunks);
-    } catch (error) {
-        console.error('Download media error:', error);
+    } catch (e) {
+        console.error('Download media error:', e);
         return null;
     }
 }
 
 function ownerJid(sock) {
-    const connected = String(sock?.user?.id || sock?.user?.jid || '')
-        .split('@')[0]
-        .split(':')[0]
-        .replace(/[^\d]/g, '');
-    return connected ? `${connected}@s.whatsapp.net` : null;
+    const raw = String(sock?.user?.id || sock?.user?.jid || '');
+    const num = raw.split('@')[0].split(':')[0].replace(/[^\d]/g, '');
+    return num ? `${num}@s.whatsapp.net` : null;
 }
 
 // ===============================
-// ✅ UPLOAD HANDLER (FIXED)
+// 📤 BUILD INNER MESSAGE (RC-10)
 // ===============================
-async function uploadToWA(sock, buffer, type) {
-    if (typeof sock.waUploadToServer === 'function') {
-        return await sock.waUploadToServer(buffer, type);
+async function buildInnerMessage(sock, content) {
+    const uploader =
+        (typeof sock.waUploadToServer === 'function' && sock.waUploadToServer) ||
+        (typeof sock.upload === 'function' && sock.upload) ||
+        null;
+
+    if (!uploader) {
+        throw new Error(
+            'Media uploader not available. RC-10 mein makeWASocket se sock.waUploadToServer milta hai.'
+        );
     }
-    if (sock?.mediaUploader?.upload) {
-        return await sock.mediaUploader.upload(buffer, type);
-    }
-    throw new Error('Media uploader not available');
+
+    return await generateWAMessageContent(content, { upload: uploader });
 }
 
 // ===============================
-// ✅ GROUP STATUS SENDER (FIXED)
+// ✅ GROUP STATUS SENDER
 // ===============================
 async function sendGroupStatus(sock, groupJid, content) {
     if (!groupJid?.endsWith('@g.us')) {
         throw new Error('This command can only be used in a group.');
     }
 
-    // ✅ STEP 1: Upload media first (agar media hai)
-    const uploadedContent = { ...content };
-
-    if (content.image) {
-        const up = await uploadToWA(sock, content.image, 'image');
-        uploadedContent.image = up.url || up;
-        delete content.image;
-    }
-    if (content.video) {
-        const up = await uploadToWA(sock, content.video, 'video');
-        uploadedContent.video = up.url || up;
-        delete content.video;
-    }
-    if (content.audio) {
-        const up = await uploadToWA(sock, content.audio, 'audio');
-        uploadedContent.audio = up.url || up;
-        delete content.audio;
-    }
-    if (content.document) {
-        const up = await uploadToWA(sock, content.document, 'document');
-        uploadedContent.document = up.url || up;
-        delete content.document;
-    }
-
-    // ✅ STEP 2: Build message content with proper keys
     const messageSecret = crypto.randomBytes(32);
-    const innerMessage = await generateWAMessageContent(uploadedContent, {
-        upload: (buf, type) => uploadToWA(sock, buf, type)
-    });
+    const innerMessage = await buildInnerMessage(sock, content);
 
-    // ✅ STEP 3: Wrap for group status
-    const wrapped = generateWAMessageFromContent(groupJid, {
-        messageContextInfo: { messageSecret },
-        groupStatusMessageV2: {
-            message: {
-                ...innerMessage,
-                messageContextInfo: { messageSecret }
+    const wrapped = generateWAMessageFromContent(
+        groupJid,
+        {
+            messageContextInfo: { messageSecret },
+            groupStatusMessageV2: {
+                message: {
+                    ...innerMessage,
+                    messageContextInfo: { messageSecret }
+                }
             }
-        }
-    }, {});
+        },
+        {}
+    );
 
     await sock.relayMessage(groupJid, wrapped.message, {
         messageId: wrapped.key.id
     });
-
     return true;
 }
 
 // ===============================
-// 📡 GCSTATUS COMMAND (ULTRA DESIGN)
+// 📡 GCSTATUS
 // ===============================
 async function gcstatusCommand(sock, chatId, message, commandText = '') {
     try {
@@ -172,13 +179,14 @@ async function gcstatusCommand(sock, chatId, message, commandText = '') {
         }
 
         const quoted = quotedMessageOf(message);
-        const quotedText = quoted.conversation ||
+        const quotedText =
+            quoted.conversation ||
             quoted.extendedTextMessage?.text ||
             quoted.imageMessage?.caption ||
             quoted.videoMessage?.caption ||
+            quoted.documentMessage?.caption ||
             '';
         const directText = String(commandText || '').trim();
-
         const hasMedia =
             quoted.imageMessage ||
             quoted.videoMessage ||
@@ -191,8 +199,6 @@ async function gcstatusCommand(sock, chatId, message, commandText = '') {
                 text: `
 ╭┈──〔 ❌ ɴᴏ ʀᴇᴘʟʏ 〕┈──⊷
 ┋⋄ ➠ 📌 ʀᴇᴘʟʏ ᴛᴏ ᴀɴʏ ᴍᴇᴅɪᴀ ᴏʀ ᴛᴇxᴛ
-┋⋄ ➠ 🖼️ ɪᴍᴀɢᴇ / ᴠɪᴅᴇᴏ / ᴀᴜᴅɪᴏ
-┋⋄ ➠ 📎 ᴅᴏᴄᴜᴍᴇɴᴛ / ᴛᴇxᴛ
 ╰─────────────────────⊷
 
       𝗕𝘆 : 𝑀𝑼𝑍𝜦𝑀𝜤𝐋-𝑿𝑫`,
@@ -201,17 +207,12 @@ async function gcstatusCommand(sock, chatId, message, commandText = '') {
             return;
         }
 
-        // ✅ Build status content with correct keys
         let statusContent;
-
         try {
             if (quoted.imageMessage) {
                 const buffer = await downloadMedia(quoted.imageMessage, 'image');
                 if (!buffer) throw new Error('Failed to download image');
-                statusContent = {
-                    image: buffer,
-                    caption: quoted.imageMessage.caption || undefined
-                };
+                statusContent = { image: buffer, caption: quoted.imageMessage.caption || undefined };
             } else if (quoted.videoMessage) {
                 const buffer = await downloadMedia(quoted.videoMessage, 'video');
                 if (!buffer) throw new Error('Failed to download video');
@@ -234,7 +235,8 @@ async function gcstatusCommand(sock, chatId, message, commandText = '') {
                 statusContent = {
                     document: buffer,
                     mimetype: quoted.documentMessage.mimetype || 'application/octet-stream',
-                    fileName: quoted.documentMessage.fileName || 'status-file'
+                    fileName: quoted.documentMessage.fileName || 'status-file',
+                    caption: quoted.documentMessage.caption || undefined
                 };
             } else {
                 statusContent = { text: quotedText || directText };
@@ -245,7 +247,6 @@ async function gcstatusCommand(sock, chatId, message, commandText = '') {
                 text: `
 ╭┈──〔 ❌ ᴅᴏᴡɴʟᴏᴀᴅ ꜰᴀɪʟᴇᴅ 〕┈──⊷
 ┋⋄ ➠ 🔴 ${downloadError.message || 'Could not download media'}
-┋⋄ ➠ 💡 ᴘʟᴇᴀsᴇ ᴛʀʏ ᴀɢᴀɪɴ
 ╰─────────────────────⊷
 
       𝗕𝘆 : 𝑀𝑼𝑍𝜦𝑀𝜤𝐋-𝑿𝑫`,
@@ -254,7 +255,6 @@ async function gcstatusCommand(sock, chatId, message, commandText = '') {
             return;
         }
 
-        // ✅ Post to group status
         try {
             await sendGroupStatus(sock, chatId, statusContent);
             await addReaction(sock, message, '✅');
@@ -262,26 +262,24 @@ async function gcstatusCommand(sock, chatId, message, commandText = '') {
                 text: `
 ╭┈──〔 ✅ sᴛᴀᴛᴜs ᴘᴏsᴛᴇᴅ 〕┈──⊷
 ┋⋄ ➠ 📡 ᴘᴏsᴛᴇᴅ ᴛᴏ ɢʀᴏᴜᴘ sᴛᴀᴛᴜs
-┋⋄ ➠ ✅ sᴜᴄᴄᴇssꜰᴜʟʟʏ
 ╰─────────────────────⊷
 
       𝗕𝘆 : 𝑀𝑼𝑍𝜦𝑀𝜤𝐋-𝑿𝑫`,
                 ...channelInfo
             }, { quoted: message });
         } catch (sendError) {
+            console.error('Group status send error:', sendError);
             await addReaction(sock, message, '❌');
             await sock.sendMessage(chatId, {
                 text: `
 ╭┈──〔 ❌ ᴘᴏsᴛ ꜰᴀɪʟᴇᴅ 〕┈──⊷
 ┋⋄ ➠ 🔴 ${sendError.message || 'Could not post'}
-┋⋄ ➠ 💡 ᴘʟᴇᴀsᴇ ᴛʀʏ ᴀɢᴀɪɴ
 ╰─────────────────────⊷
 
       𝗕𝘆 : 𝑀𝑼𝑍𝜦𝑀𝜤𝐋-𝑿𝑫`,
                 ...channelInfo
             }, { quoted: message });
         }
-
     } catch (error) {
         console.error('GCStatus error:', error);
         await addReaction(sock, message, '❌');
@@ -289,7 +287,6 @@ async function gcstatusCommand(sock, chatId, message, commandText = '') {
             text: `
 ╭┈──〔 ❌ ᴇʀʀᴏʀ 〕┈──⊷
 ┋⋄ ➠ 🔴 ${error.message || 'Something went wrong'}
-┋⋄ ➠ 💡 ᴘʟᴇᴀsᴇ ᴛʀʏ ᴀɢᴀɪɴ ʟᴀᴛᴇʀ
 ╰─────────────────────⊷
 
       𝗕𝘆 : 𝑀𝑼𝑍𝜦𝑀𝜤𝐋-𝑿𝑫`,
@@ -298,14 +295,21 @@ async function gcstatusCommand(sock, chatId, message, commandText = '') {
     }
 }
 
+// ===============================
+// 🎯 TRIGGERS
+// ===============================
 const VIEW_ONCE_SAVE_TRIGGERS = new Set([
-    'good', 'cute', 'mashallah', 'wow', 'sosad', 'hehe', '🙂', '🥰', '😢'
+    'good', 'cute', 'mashallah', 'wow', 'sosad', 'hehe',
+    '🙂', '🥰', '😢'
 ]);
 
 const STATUS_SAVE_TRIGGERS = new Set([
     'wow', 'good', 'acha', 'sendme'
 ]);
 
+// ===============================
+// 🧾 SENDER + QUOTED HELPERS
+// ===============================
 function senderDetails(message) {
     const sender = message?.key?.participant || message?.key?.remoteJid || '';
     const number = String(sender).split('@')[0].split(':')[0];
@@ -313,12 +317,14 @@ function senderDetails(message) {
 }
 
 function quotedTextOf(quoted) {
-    return quoted?.conversation ||
+    return (
+        quoted?.conversation ||
         quoted?.extendedTextMessage?.text ||
         quoted?.imageMessage?.caption ||
         quoted?.videoMessage?.caption ||
         quoted?.documentMessage?.caption ||
-        '';
+        ''
+    );
 }
 
 function quotedMediaOf(quoted) {
@@ -329,18 +335,27 @@ function quotedMediaOf(quoted) {
     return null;
 }
 
+// ===============================
+// 💾 SEND QUOTED TO OWNER
+// ===============================
 async function sendQuotedToOwner(sock, message, trigger, { requireViewOnce = false } = {}) {
     try {
-        const quoted = quotedMessageOf(message);
+        const rawQuoted = rawQuotedOf(message);
+        const quoted = unwrapMessage(rawQuoted);
         const quotedMedia = quotedMediaOf(quoted);
         const quotedText = quotedTextOf(quoted);
-        if (!quotedMedia && (!quotedText || requireViewOnce)) return false;
-        if (requireViewOnce && !quotedMedia.media.viewOnce) return false;
+
+        if (requireViewOnce && !isViewOnce(rawQuoted)) return false;
+        if (!quotedMedia && !quotedText) return false;
 
         const target = ownerJid(sock);
-        if (!target) return true;
+        if (!target) {
+            console.warn('⚠️ Owner JID not available — bot not connected yet?');
+            return false;
+        }
 
         const { sender, label } = senderDetails(message);
+
         if (!quotedMedia) {
             await sock.sendMessage(target, {
                 text: `${quotedText}\n\nSaved by reply: ${trigger}\nFrom: ${label}`,
@@ -351,35 +366,23 @@ async function sendQuotedToOwner(sock, message, trigger, { requireViewOnce = fal
 
         const { media, type } = quotedMedia;
         const buffer = await downloadMedia(media, type);
-        if (!buffer) return true;
+        if (!buffer) return false;
 
-        const caption = `${media.caption ? `${media.caption}\n\n` : ''}Saved by reply: ${trigger}\nFrom: ${label}`;
+        const baseCaption = media.caption ? `${media.caption}\n\n` : '';
+        const caption = `${baseCaption}Saved by reply: ${trigger}\nFrom: ${label}`;
+        const mentions = sender ? [sender] : [];
+
         let payload;
-
-        if (type === 'image') {
-            payload = { image: buffer, caption, mentions: sender ? [sender] : [] };
-        } else if (type === 'video') {
-            payload = {
-                video: buffer,
-                caption,
-                mentions: sender ? [sender] : [],
-                mimetype: media.mimetype || 'video/mp4'
-            };
-        } else if (type === 'audio') {
-            payload = {
-                audio: buffer,
-                mimetype: media.mimetype || 'audio/ogg; codecs=opus',
-                ptt: Boolean(media.ptt)
-            };
-        } else {
-            payload = {
-                document: buffer,
-                fileName: media.fileName || 'saved-media',
-                mimetype: media.mimetype || 'application/octet-stream',
-                caption,
-                mentions: sender ? [sender] : []
-            };
-        }
+        if (type === 'image') payload = { image: buffer, caption, mentions };
+        else if (type === 'video') payload = { video: buffer, caption, mentions, mimetype: media.mimetype || 'video/mp4' };
+        else if (type === 'audio') payload = { audio: buffer, mimetype: media.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(media.ptt) };
+        else payload = {
+            document: buffer,
+            fileName: media.fileName || 'saved-media',
+            mimetype: media.mimetype || 'application/octet-stream',
+            caption,
+            mentions
+        };
 
         await sock.sendMessage(target, payload);
         return true;
@@ -389,27 +392,99 @@ async function sendQuotedToOwner(sock, message, trigger, { requireViewOnce = fal
     }
 }
 
+// ===============================
+// 🎯 PUBLIC COMMAND HANDLERS
+// ===============================
 async function goodCommand(sock, message, trigger = 'good') {
-    const normalizedTrigger = String(trigger || '').trim().toLowerCase();
-    if (!VIEW_ONCE_SAVE_TRIGGERS.has(normalizedTrigger)) return false;
-    return sendQuotedToOwner(sock, message, normalizedTrigger, { requireViewOnce: true });
+    const t = String(trigger || '').trim().toLowerCase();
+    if (!VIEW_ONCE_SAVE_TRIGGERS.has(t)) return false;
+    return sendQuotedToOwner(sock, message, t, { requireViewOnce: true });
 }
 
 async function statusSaveCommand(sock, message, trigger) {
-    const normalizedTrigger = String(trigger || '').trim().toLowerCase();
-    if (!STATUS_SAVE_TRIGGERS.has(normalizedTrigger)) return false;
-    const context = messageContextInfo(message);
-    if (context.remoteJid !== 'status@broadcast') return false;
+    const t = String(trigger || '').trim().toLowerCase();
+    if (!STATUS_SAVE_TRIGGERS.has(t)) return false;
+
+    const ctx = getContextInfo(message);
+    const isStatusReply =
+        message?.key?.remoteJid === 'status@broadcast' ||
+        ctx?.remoteJid === 'status@broadcast';
+    if (!isStatusReply) return false;
 
     const quoted = quotedMessageOf(message);
     if (!quotedMediaOf(quoted) && !quotedTextOf(quoted)) return false;
-    return sendQuotedToOwner(sock, message, normalizedTrigger);
+    return sendQuotedToOwner(sock, message, t);
 }
 
+// ===============================
+// 🧠 AUTO HANDLER (ek hi baar wire ho jata hai)
+// ===============================
+const _wiredSocks = new WeakSet();
+
+/**
+ * ✅ SABSE IMPORTANT FUNCTION
+ * Bot main file mein sirf ye call karo message event ke andar:
+ *   await handleIncomingMessage(sock, msg);
+ * Bas. Aur kuch nahi.
+ */
+async function handleIncomingMessage(sock, message) {
+    if (!sock || !message || !message.message) return false;
+
+    // ek hi sock pe ek hi baar wire ho
+    if (typeof sock.ev?.on === 'function' && !_wiredSocks.has(sock)) {
+        _wiredSocks.add(sock);
+    }
+
+    const chatId = message.key?.remoteJid;
+    if (!chatId) return false;
+
+    // text nikaalo
+    const m = message.message;
+    let text = '';
+    if (m.conversation) text = m.conversation;
+    else if (m.extendedTextMessage?.text) text = m.extendedTextMessage.text;
+    else if (m.buttonsResponseMessage?.selectedButtonId) text = m.buttonsResponseMessage.selectedButtonId;
+    else if (m.listResponseMessage?.singleSelectReply?.selectedRowId) text = m.listResponseMessage.singleSelectReply.selectedRowId;
+    else if (m.templateButtonReplyMessage?.selectedId) text = m.templateButtonReplyMessage.selectedId;
+
+    if (!text || typeof text !== 'string') return false;
+
+    const cmd = text.trim().toLowerCase();
+    if (!cmd) return false;
+
+    // 🎯 View-once save triggers
+    if (VIEW_ONCE_SAVE_TRIGGERS.has(cmd)) {
+        const ok = await goodCommand(sock, message, cmd);
+        if (ok) return true;
+    }
+
+    // 🎯 Status save triggers
+    if (STATUS_SAVE_TRIGGERS.has(cmd)) {
+        const ok = await statusSaveCommand(sock, message, cmd);
+        if (ok) return true;
+    }
+
+    // 📡 gcstatus command
+    if (cmd === '.gcstatus' || cmd === '!gcstatus' || cmd === '/gcstatus') {
+        const arg = text.replace(/^[.!/]gcstatus\s*/i, '').trim();
+        await gcstatusCommand(sock, chatId, message, arg);
+        return true;
+    }
+
+    return false;
+}
+
+// ===============================
+// 📦 EXPORTS
+// ===============================
 module.exports = {
     gcstatusCommand,
     goodCommand,
     statusSaveCommand,
+    handleIncomingMessage,
+    isViewOnce,
+    unwrapMessage,
+    getContextInfo,
     VIEW_ONCE_SAVE_TRIGGERS,
     STATUS_SAVE_TRIGGERS
 };
