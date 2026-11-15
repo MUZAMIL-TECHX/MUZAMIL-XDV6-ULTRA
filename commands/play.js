@@ -52,21 +52,6 @@ function trim(str, n) {
     return str.length > n ? str.slice(0, n) + '...' : str;
 }
 
-async function tryRequest(getter, attempts = 3) {
-    let lastError;
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-        try {
-            return await getter();
-        } catch (err) {
-            lastError = err;
-            if (attempt < attempts) {
-                await new Promise(r => setTimeout(r, 1000 * attempt));
-            }
-        }
-    }
-    throw lastError;
-}
-
 // ═══════════════════════════════════════════════════════════
 //                    🔍 SEARCH (yt-search)
 // ═══════════════════════════════════════════════════════════
@@ -95,75 +80,27 @@ async function searchSong(query) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//                    🎵 MULTI-API FALLBACK CHAIN
+//                    🎵 VAJIRA API DOWNLOADER
 // ═══════════════════════════════════════════════════════════
-async function getEliteProTechDownloadByUrl(youtubeUrl) {
-    const apiUrl = `https://eliteprotech-apis.zone.id/ytdown?url=${encodeURIComponent(youtubeUrl)}&format=mp3`;
-    const res = await tryRequest(() => axios.get(apiUrl, AXIOS_DEFAULTS));
-    if (res?.data?.success && res?.data?.downloadURL) {
-        return { download: res.data.downloadURL, title: res.data.title };
-    }
-    throw new Error('EliteProTech returned no download');
-}
+async function getVajiraDownload(youtubeUrl) {
+    // Aapki API key aur quality yaha set hai
+    const apiKey = 'VajiraOfc'; 
+    const quality = '128kbps'; // Aap '16kbps' ya '320kbps' bhi kar sakte hain
 
-async function getYupraDownloadByUrl(youtubeUrl) {
-    const apiUrl = `https://api.yupra.my.id/api/downloader/ytmp3?url=${encodeURIComponent(youtubeUrl)}`;
-    const res = await tryRequest(() => axios.get(apiUrl, AXIOS_DEFAULTS));
-    if (res?.data?.success && res?.data?.data?.download_url) {
-        return {
-            download: res.data.data.download_url,
-            title: res.data.data.title,
-            thumbnail: res.data.data.thumbnail
+    const apiUrl = `https://vajiraofc-apis.vercel.app/api/ytmp3?apikey=${apiKey}&url=${encodeURIComponent(youtubeUrl)}&quality=${quality}`;
+    
+    const res = await axios.get(apiUrl, AXIOS_DEFAULTS);
+    
+    // Naye JSON structure ke hisaab se check
+    if (res?.data?.success && res?.data?.data?.download?.url) {
+        return { 
+            download: res.data.data.download.url, 
+            title: res.data.data.title 
         };
     }
-    throw new Error('Yupra returned no download');
+    
+    throw new Error('Vajira API returned no download link');
 }
-
-async function getOkatsuDownloadByUrl(youtubeUrl) {
-    const apiUrl = `https://okatsu-rolezapiiz.vercel.app/downloader/ytmp3?url=${encodeURIComponent(youtubeUrl)}`;
-    const res = await tryRequest(() => axios.get(apiUrl, AXIOS_DEFAULTS));
-    if (res?.data?.dl) {
-        return {
-            download: res.data.dl,
-            title: res.data.title,
-            thumbnail: res.data.thumb
-        };
-    }
-    throw new Error('Okatsu returned no download');
-}
-
-async function getAlyaDownloadByUrl(youtubeUrl) {
-    const res = await tryRequest(() => axios.get(
-        `https://api.alyachan.pro/api/ytmp3?url=${encodeURIComponent(youtubeUrl)}&apikey=G7I6X7`,
-        AXIOS_DEFAULTS
-    ));
-    if (res.data.status && res.data.data.url) {
-        return { download: res.data.data.url, title: res.data.data.title };
-    }
-    throw new Error('Alya failed');
-}
-
-async function getVredenDownloadByUrl(youtubeUrl) {
-    const res = await tryRequest(() => axios.get(
-        `https://api.vreden.my.id/api/ytmp3?url=${encodeURIComponent(youtubeUrl)}`,
-        AXIOS_DEFAULTS
-    ));
-    if (res.data.status && res.data.result.download.url) {
-        return {
-            download: res.data.result.download.url,
-            title: res.data.result.metadata.title
-        };
-    }
-    throw new Error('Vreden failed');
-}
-
-const API_METHODS = [
-    { name: 'EliteProTech', method: getEliteProTechDownloadByUrl },
-    { name: 'Yupra',        method: getYupraDownloadByUrl },
-    { name: 'Okatsu',       method: getOkatsuDownloadByUrl },
-    { name: 'Alya',         method: getAlyaDownloadByUrl },
-    { name: 'Vreden',       method: getVredenDownloadByUrl }
-];
 
 // ═══════════════════════════════════════════════════════════
 //                    📥 BUFFER DOWNLOAD
@@ -219,7 +156,7 @@ async function playCommand(sock, chatId, message) {
                     '🔍 ᴇxᴀᴍᴘʟᴇ 1 : .ᴘʟᴀʏ ᴘᴀꜱᴏᴏʀɪ',
                     '🔍 ᴇxᴀᴍᴘʟᴇ 2 : .ᴘʟᴀʏ ʟᴇʟᴇɴᴀ',
                     '━━━━━━━━━━━━━━━━━━',
-                    '⚡ ᴍᴏᴅᴇ : ᴍᴜʟᴛɪ-ᴀᴘɪ ꜰᴀʟʟʙᴀᴄᴋ'
+                    '⚡ ᴘᴏᴡᴇʀᴇᴅ ʙʏ : ᴠᴀᴊɪʀᴀ ᴀᴘɪ'
                 ]),
                 ...channelInfo
             }, { quoted: message });
@@ -261,37 +198,35 @@ async function playCommand(sock, chatId, message) {
             console.error('Thumbnail error:', thumbError.message);
         }
 
-        // STEP 3: MULTI-API FALLBACK DOWNLOAD
+        // STEP 3: DOWNLOAD VIA VAJIRA API
         await addReaction(sock, message, '📥');
 
         let audioBuffer = null;
         let finalTitle = songData.title;
         let lastError = null;
 
-        for (const api of API_METHODS) {
-            try {
-                const audioData = await api.method(songData.url);
-                if (!audioData?.download) throw new Error('No download URL');
+        try {
+            const audioData = await getVajiraDownload(songData.url);
+            if (!audioData?.download) throw new Error('No download URL received');
 
-                finalTitle = audioData.title || songData.title;
-                audioBuffer = await downloadBuffer(audioData.download);
-
-                if (audioBuffer && audioBuffer.length > 0) {
-                    console.log(`✅ Downloaded via ${api.name}`);
-                    break;
-                }
-                throw new Error('Empty buffer');
-            } catch (err) {
-                lastError = err;
-                console.log(`❌ ${api.name} failed:`, err.message);
+            finalTitle = audioData.title || songData.title;
+            audioBuffer = await downloadBuffer(audioData.download);
+            
+            if (!audioBuffer || audioBuffer.length === 0) {
+                throw new Error('Downloaded buffer is empty');
             }
+            console.log(`✅ Downloaded via Vajira API`);
+            
+        } catch (err) {
+            lastError = err;
+            console.log(`❌ Vajira API failed:`, err.message);
         }
 
         if (!audioBuffer) {
             await addReaction(sock, message, '❌');
             return await sock.sendMessage(chatId, {
                 text: box('❌ ᴘʟᴀʏ ꜰᴀɪʟᴇᴅ', [
-                    '🔴 ᴀʟʟ ᴀᴘɪ ꜱᴏᴜʀᴄᴇꜱ ꜰᴀɪʟᴇᴅ',
+                    '🔴 ᴀᴘɪ ᴅᴏᴡɴʟᴏᴀᴅ ꜰᴀɪʟᴇᴅ',
                     `⚠️ ${trim(lastError?.message || 'Unknown', 60)}`,
                     '💡 ᴛʀʏ ᴅɪꜰꜰᴇʀᴇɴᴛ ꜱᴏɴɢ'
                 ]),
