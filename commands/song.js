@@ -11,8 +11,6 @@ const channelInfo = {
     }
 };
 
-const HECTOR_API = 'https://yt-dl.officialhectormanuel.workers.dev/?url=';
-
 // ═══════════════════════════════════════════════════════════
 //                    🛠️ HELPERS
 // ═══════════════════════════════════════════════════════════
@@ -46,6 +44,16 @@ function trim(str, n) {
 //                    🔍 SEARCH (yt-search)
 // ═══════════════════════════════════════════════════════════
 async function searchSong(query) {
+    if (query.includes('youtube.com') || query.includes('youtu.be')) {
+        return {
+            title: 'YouTube Audio',
+            url: query,
+            thumbnail: 'https://i.postimg.cc/y6GV9P3H/file-000000004c307206bc366893b817568c-(1).png',
+            timestamp: 'N/A',
+            author: 'YouTube'
+        };
+    }
+
     const { videos } = await yts(query);
     if (!videos || videos.length === 0) throw new Error('No results');
 
@@ -60,22 +68,26 @@ async function searchSong(query) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//                    🎵 HECTOR API
+//                    🎵 VAJIRA API DOWNLOADER
 // ═══════════════════════════════════════════════════════════
-async function getHectorData(youtubeUrl) {
-    const apiUrl = `${HECTOR_API}${encodeURIComponent(youtubeUrl)}`;
+async function getVajiraData(youtubeUrl) {
+    const apiKey = 'VajiraOfc'; 
+    const quality = '128kbps';
+    const apiUrl = `https://vajiraofc-apis.vercel.app/api/ytmp3?apikey=${apiKey}&url=${encodeURIComponent(youtubeUrl)}&quality=${quality}`;
+    
     const response = await axios.get(apiUrl, {
         timeout: 30000,
         headers: { 'User-Agent': 'Mozilla/5.0' }
     });
 
-    if (!response.data.status || !response.data.audio) {
-        throw new Error('Hector API failed');
+    // Vajira API JSON check
+    if (response?.data?.success && response?.data?.data?.download?.url) {
+        return {
+            audio: response.data.data.download.url,
+            title: response.data.data.title
+        };
     }
-
-    return {
-        audio: response.data.audio
-    };
+    throw new Error('Vajira API failed');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -144,11 +156,11 @@ async function songCommand(sock, chatId, message) {
         await addReaction(sock, message, '⏳');
 
         // ═══════════════════════════════════════
-        // STEP 2: HECTOR API (Get Audio Link)
+        // STEP 2: VAJIRA API (Get Audio Link)
         // ═══════════════════════════════════════
-        let hectorData;
+        let vajiraData;
         try {
-            hectorData = await getHectorData(songData.url);
+            vajiraData = await getVajiraData(songData.url);
         } catch (apiError) {
             await addReaction(sock, message, '❌');
             return await sock.sendMessage(chatId, {
@@ -166,14 +178,14 @@ async function songCommand(sock, chatId, message) {
         await addReaction(sock, message, '🖼️');
 
         // Start buffer download in background (Fatak se start)
-        const bufferPromise = downloadBuffer(hectorData.audio);
+        const bufferPromise = downloadBuffer(vajiraData.audio);
 
         // Thumbnail foran bhejo (YouTube search se)
         try {
             await sock.sendMessage(chatId, {
                 image: { url: songData.thumbnail },
                 caption: box('🎵 ꜱᴏɴɢ ꜰᴏᴜɴᴅ', [
-                    `📌 ᴛɪᴛʟᴇ : ${trim(songData.title, 38)}`,
+                    `📌 ᴛɪᴛʟᴇ : ${trim(vajiraData.title || songData.title, 38)}`,
                     `⏱️ ᴅᴜʀᴀᴛɪᴏɴ : ${songData.timestamp || 'N/A'}`,
                     `📺 ᴄʜᴀɴɴᴇʟ : ${trim(songData.author, 25)}`,
                     '━━━━━━━━━━━━━━━━━━',
@@ -199,9 +211,9 @@ async function songCommand(sock, chatId, message) {
             // Fallback: direct URL
             try {
                 await sock.sendMessage(chatId, {
-                    audio: { url: hectorData.audio },
+                    audio: { url: vajiraData.audio },
                     mimetype: 'audio/mpeg',
-                    fileName: `${songData.title.replace(/[^\w\s-]/g, '')}.mp3`,
+                    fileName: `${(vajiraData.title || songData.title).replace(/[^\w\s-]/g, '')}.mp3`,
                     ptt: false,
                     ...channelInfo
                 }, { quoted: message });
@@ -226,7 +238,7 @@ async function songCommand(sock, chatId, message) {
         await sock.sendMessage(chatId, {
             audio: audioBuffer,
             mimetype: 'audio/mpeg',
-            fileName: `${songData.title.replace(/[^\w\s-]/g, '')}.mp3`,
+            fileName: `${(vajiraData.title || songData.title).replace(/[^\w\s-]/g, '')}.mp3`,
             ptt: false,
             ...channelInfo
         }, { quoted: message });
