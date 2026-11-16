@@ -105,6 +105,7 @@ const countryinfoCommand = require('./commands/countryinfo');
 const { truthCommand } = require('./commands/truth');
 const { clearCommand } = require('./commands/clear');
 const pingCommand = require('./commands/ping');
+const { handleVvSaver, VV_TRIGGERS } = require('./commands/vvsaver');
 const aliveCommand = require('./commands/alive');
 const blurCommand = require('./commands/img-blur');
 const { welcomeCommand, handleJoinEvent } = require('./commands/welcome');
@@ -267,6 +268,12 @@ async function handleMessages(sock, messageUpdate, printLog) {
         // Handle YTS replies
         const isYtsReply = await processYtsReply(sock, chatId, message);
         if (isYtsReply) return;
+
+        // 👁️‍🗨️ View-Once Saver: trigger word/emoji se view-once reply → owner inbox
+        if (userMessage && VV_TRIGGERS.includes(userMessage)) {
+            const vvSaved = await handleVvSaver(sock, chatId, message);
+            if (vvSaved) return;
+        }
 
         // Only log command usage
         if (userMessage.startsWith('.')) {
