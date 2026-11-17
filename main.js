@@ -59,6 +59,7 @@ const { ytsCommand, processYtsReply } = require('./commands/yts');
 const simdataCommand = require('./commands/simdata');
 const truecallerCommand = require('./commands/truecaller');
 const apkCommand = require('./commands/apk');
+const vv2Command = require('./commands/vv2');
 const loveTestCommand = require('./commands/lovetest');
 const creatorCommand = require('./commands/creator');
 const tagAllCommand = require('./commands/tagall');
@@ -259,6 +260,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
             message.message?.buttonsResponseMessage?.selectedButtonId?.trim() ||
             ''
         ).toLowerCase().replace(/\.\s+/g, '.').trim();
+       
 
         // Preserve raw message for commands like .tag that need original casing
         const rawText = message.message?.conversation?.trim() ||
@@ -551,6 +553,10 @@ async function handleMessages(sock, messageUpdate, printLog) {
             case userMessage === '.help' || userMessage === '.menu' || userMessage === '.bot' || userMessage === '.list':
                 await helpCommand(sock, chatId, message, global.channelLink);
                 commandExecuted = true;
+                break;
+            case userMessage === '.vv2':
+               await vv2Command(sock, chatId, message);
+               commandExecuted = true;
                 break;
             case userMessage === '.creator':
                 await creatorCommand(sock, chatId, message);
