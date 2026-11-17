@@ -28,6 +28,23 @@ async function askLlama(text) {
     return extractText(response.data).trim();
 }
 
+// Helper to get real name from group
+async function getName(sock, jid, chatId) {
+    let name = jid.split('@')[0];
+    try {
+        if (chatId.endsWith('@g.us')) {
+            const metadata = await sock.groupMetadata(chatId);
+            const participant = metadata.participants.find(p => p.id === jid);
+            if (participant && participant.name) {
+                name = participant.name;
+            }
+        }
+    } catch (e) {
+        console.error("Name fetch error:", e.message);
+    }
+    return name;
+}
+
 // ═══════════════════════════════════════════════════════════
 //                    💘 LOVE TEST COMMAND
 // ═══════════════════════════════════════════════════════════
@@ -54,35 +71,41 @@ module.exports = async (sock, chatId, message) => {
 
         await sock.sendMessage(chatId, { react: { text: '❤️', key: message.key } });
 
-        const user1 = `@${mentioned[0].split("@")[0]}`;
-        const user2 = `@${mentioned[1].split("@")[0]}`;
+        // IDs for tagging
+        const tag1 = `@${mentioned[0].split("@")[0]}`;
+        const tag2 = `@${mentioned[1].split("@")[0]}`;
 
-        // Random Percentage (10 se 100 tak)
+        // Real Names for AI text
+        const name1 = await getName(sock, mentioned[0], chatId);
+        const name2 = await getName(sock, mentioned[1], chatId);
+
         const finalPercent = Math.floor(Math.random() * 10 + 1) * 10; 
 
-        // AI ko clear instructions de rahe hain Roman Urdu ke liye
-        const prompt = `inke love percentage dekh ke inko kuchh bolo funny line roman urdu me emoji bhe use krna .\n\nLove Percentage: ${finalPercent}%\nNames: ${user1} and ${user2}`;
+        // Prompt for AI (No @ symbol, only names)
+        const prompt = `You are a funny friend. Inke love percentage dekh ke inko kuchh funny line roman urdu me bolo. Use 1-2 emojis.\n\nNames: ${name1} and ${name2}\nLove Percentage: ${finalPercent}%\n\nDo NOT use @ symbol. Just write their names.`;
 
         let funnyDialogue;
         try {
             funnyDialogue = await askLlama(prompt);
+            // Safety: Remove any @ if AI adds it
+            funnyDialogue = funnyDialogue.replace(/@/g, '').trim();
         } catch (aiError) {
             console.error("AI failed:", aiError.message);
             funnyDialogue = "Api down hai bhai, thori der baad try karo 😂";
         }
 
-        // Ultra VIP Design
+        // VIP Design
         const replyText = `┏━━━━━━━━━━━━━━━━━━━┓\n` +
-                          `┃   💘 *Lᴏᴠᴇ Tᴇsᴛ* 💘\n` +
+                          `┃   💘 *ʟᴏᴠᴇ ᴛᴇsᴛ* 💘\n` +
                           `┗━━━━━━━━━━━━━━━━━━━┛\n\n` +
-                          `👤 *User 1:* ${user1}\n` +
-                          `👤 *User 2:* ${user2}\n\n` +
-                          `📊 *Result:* ${finalPercent}%\n\n` +
-                          `❤️ *Aapki Love:* ${finalPercent}% Hai\n\n` +
+                          `👤 *ᴜsᴇʀ 1:* ${tag1}\n` + // Tag for notification
+                          `👤 *ᴜsᴇʀ 2:* ${tag2}\n\n` + // Tag for notification
+                          `📊 *ʀᴇsᴜʟᴛ:* ${finalPercent}%\n\n` +
+                          `❤️ *ᴀᴀᴘᴋɪ ʟᴏᴠᴇ:* ${finalPercent}% ʜᴀɪ\n\n` +
                           `*😂😝:*\n` +
                           `\`${funnyDialogue}\`\n\n` +
                           `┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n` +
-                          `   ⚡ *By : Muzamil-XD* ⚡`;
+                          `   ⚡ *ʙʏ : ᴍᴜᴢᴀᴍɪʟ-xᴅ* ⚡`;
 
         await sendMsg(replyText, mentioned);
         await sock.sendMessage(chatId, { react: { text: '✅', key: message.key } });
@@ -90,6 +113,6 @@ module.exports = async (sock, chatId, message) => {
     } catch (err) {
         console.error("Love Test Error:", err.message);
         await sock.sendMessage(chatId, { react: { text: '❌', key: message.key } });
-        await sendMsg("⚠️ *Error:* Love test nahi ho paya. Thodi der baad try karein.");
+        await sendMsg("⚠️ *ᴇʀʀᴏʀ:* ʟᴏᴠᴇ ᴛᴇsᴛ ɴᴀʜɪ ʜᴏ ᴘᴀʏᴀ. ᴛʜᴏᴅɪ ᴅᴇʀ ʙᴀᴀᴅ ᴛʀʏ ᴋᴀʀᴇɪɴ.");
     }
 };
