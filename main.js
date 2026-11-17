@@ -1,3 +1,4 @@
+
 // 🧹 Fix for ENOSPC / temp overflow in hosted panels
 const fs = require('fs');
 const path = require('path');
@@ -55,7 +56,6 @@ const fetchCommand = require('./commands/fetch');
 const searchimgCommand = require('./commands/searchimg');
 const mediafireCommand = require('./commands/mediafire');
 const { ytsCommand, processYtsReply } = require('./commands/yts');
-const ytsHandler = require('./ytsCommand'); // 👈 YAHAN ADD KIYA HAI
 const simdataCommand = require('./commands/simdata');
 const truecallerCommand = require('./commands/truecaller');
 const apkCommand = require('./commands/apk');
@@ -228,32 +228,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
         const senderIsSudo = await isSudo(senderId, sock);
         const senderIsOwnerOrSudo = await isOwnerOrSudo(senderId, sock, chatId);
 
-        // =========================================================
-        // 🎯 YTS BUTTON CLICK HANDLER (YAHAN ADD KIYA HAI)
-        // =========================================================
-        // Button click detect karne ke liye:
-        if (message.message?.buttonsResponseMessage) {
-            const buttonId = message.message.buttonsResponseMessage.selectedButtonId;
-            const quotedMsgId = message.message.buttonsResponseMessage.contextInfo?.stanzaId;
-            if (buttonId === 'audio_dl' || buttonId === 'video_dl') {
-                await ytsHandler(sock, chatId, message, '', true, buttonId, quotedMsgId);
-                return;
-            }
-        }
-
-        // Agar aapka bot protocol message (edit) use karta hai button ke liye:
-        if (message.message?.protocolMessage?.editedMessage?.buttonsResponseMessage) {
-            const btnMsg = message.message.protocolMessage.editedMessage.buttonsResponseMessage;
-            const buttonId = btnMsg.selectedButtonId;
-            const quotedMsgId = message.message.protocolMessage.key.id;
-            if (buttonId === 'audio_dl' || buttonId === 'video_dl') {
-                await ytsHandler(sock, chatId, message, '', true, buttonId, quotedMsgId);
-                return;
-            }
-        }
-        // =========================================================
-
-        // Handle button responses (PURANE BUTTONS)
+        // Handle button responses
         if (message.message?.buttonsResponseMessage) {
             const buttonId = message.message.buttonsResponseMessage.selectedButtonId;
             const chatId = message.key.remoteJid;
