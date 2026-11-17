@@ -31,6 +31,7 @@ const { readSessionJson, writeSessionJson, getSessionSettings, updateSessionSett
 require('./config.js');
 const { isBanned } = require('./lib/isBanned');
 const yts = require('yt-search');
+const store = require('./lib/store');
 const { fetchBuffer } = require('./lib/myfunc');
 const fetch = require('node-fetch');
 const ytdl = require('ytdl-core');
