@@ -59,6 +59,7 @@ const { ytsCommand, processYtsReply } = require('./commands/yts');
 const simdataCommand = require('./commands/simdata');
 const truecallerCommand = require('./commands/truecaller');
 const apkCommand = require('./commands/apk');
+const loveTestCommand = require('./commands/lovetest');
 const creatorCommand = require('./commands/creator');
 const tagAllCommand = require('./commands/tagall');
 const helpCommand = require('./commands/help');
@@ -695,6 +696,10 @@ async function handleMessages(sock, messageUpdate, printLog) {
                await truecallerCommand(sock, chatId, message, number);
                  commandExecuted = true;
                 break;
+           case userMessage.startsWith('.lovetest'):
+              await loveTestCommand(sock, chatId, message);
+                commandExecuted = true;
+               break;
             case userMessage === '.sticker' || userMessage === '.s':
                 await stickerCommand(sock, chatId, message);
                 commandExecuted = true;
