@@ -204,7 +204,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
 
         const message = messages[0];
         if (!message?.message) return;
-
+        await store.saveMessage(message);
         // Capture view-once media before any command or wrapper handling consumes it.
         await handleAntiVv(sock, message);
 
