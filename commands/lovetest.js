@@ -61,7 +61,7 @@ module.exports = async (sock, chatId, message) => {
         const finalPercent = Math.floor(Math.random() * 10 + 1) * 10; 
 
         // AI ko clear instructions de rahe hain Roman Urdu ke liye
-        const prompt = `You are a funny Pakistani friend. I will give you a love percentage. Write a very short, funny, and savage dialogue in pure ROMAN URDU (Urdu written in English alphabets, like "Tum dono ki toh nai banegi"). Do NOT write in English or Arabic script. Add 1 funny emoji at the end. Keep it to 1-2 lines max.\n\nLove Percentage: ${finalPercent}%\nNames: ${user1} and ${user2}`;
+        const prompt = `inke love percentage dekh ke inko kuchh bolo funny line roman urdu me emoji bhe use krna .\n\nLove Percentage: ${finalPercent}%\nNames: ${user1} and ${user2}`;
 
         let funnyDialogue;
         try {
@@ -79,7 +79,7 @@ module.exports = async (sock, chatId, message) => {
                           `👤 *User 2:* ${user2}\n\n` +
                           `📊 *Result:* ${finalPercent}%\n\n` +
                           `❤️ *Aapki Love:* ${finalPercent}% Hai\n\n` +
-                          `📝 *Muzamil Ne bola abhi😂😝:*\n` +
+                          `*😂😝:*\n` +
                           `\`${funnyDialogue}\`\n\n` +
                           `┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n` +
                           `   ⚡ *By : Muzamil-XD* ⚡`;
