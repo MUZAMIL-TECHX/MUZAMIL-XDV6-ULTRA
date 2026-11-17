@@ -19,7 +19,6 @@ const VAJIRA_MP3_API = 'https://vajiraofc-apis.vercel.app/api/ytmp3?apikey=Vajir
 // ═══════════════════════════════════════════════════════════
 const activeSearches = new Map();
 const pendingFormat = new Map();
-const pendingQuality = new Map();
 const processing = new Set();
 
 // ═══════════════════════════════════════════════════════════
@@ -47,9 +46,6 @@ setInterval(() => {
     }
     for (const [id, data] of pendingFormat) {
         if (now - data.timestamp > CONFIG.SEARCH_EXPIRY_MS) pendingFormat.delete(id);
-    }
-    for (const [id, data] of pendingQuality) {
-        if (now - data.timestamp > CONFIG.SEARCH_EXPIRY_MS) pendingQuality.delete(id);
     }
 }, CONFIG.CLEANUP_INTERVAL_MS);
 
@@ -232,43 +228,6 @@ async function processYtsReply(sock, chatId, message) {
         const sender = message.key.participant || message.key.remoteJid;
 
         // ═══════════════════════════════════════
-        // STEP 3: Quality Selection (Agar audio ke liye select kiya tha)
-        // ═══════════════════════════════════════
-        if (pendingQuality.has(quotedMsgId)) {
-            const pending = pendingQuality.get(quotedMsgId);
-            if (sender !== pending.sender) return false;
-
-            const quality = text.replace(/p$/i, '').trim();
-            if (!pending.qualities.includes(quality)) {
-                await sock.sendMessage(chatId, {
-                    text: box('❌ ɪɴᴠᴀʟɪᴅ ǫᴜᴀʟɪᴛʏ', [
-                        `🎬 ᴀᴠᴀɪʟᴀʙʟᴇ : ${pending.qualities.join(', ')}`,
-                        '💡 ʀᴇᴘʟʏ ᴡɪᴛʜ ᴏɴᴇ ᴏꜰ ᴛʜᴇsᴇ'
-                    ]),
-                    ...channelInfo
-                }, { quoted: message });
-                return true;
-            }
-
-            if (processing.has(sender)) {
-                await sock.sendMessage(chatId, {
-                    text: box('⏳ ᴘʟᴇᴀsᴇ ᴡᴀɪᴛ', ['🔄 ᴘʀᴇᴠɪᴏᴜs ᴅᴏᴡɴʟᴏᴀᴅ ɪɴ ᴘʀᴏɢʀᴇss']),
-                    ...channelInfo
-                }, { quoted: message });
-                return true;
-            }
-
-            pendingQuality.delete(quotedMsgId);
-            processing.add(sender);
-            try {
-                await downloadAndSend(sock, chatId, message, pending.video, 'video', quality, pending.data);
-            } finally {
-                processing.delete(sender);
-            }
-            return true;
-        }
-
-        // ═══════════════════════════════════════
         // STEP 2: Format Selection (1 = Video, 2 = Audio)
         // ═══════════════════════════════════════
         if (pendingFormat.has(quotedMsgId)) {
@@ -278,6 +237,7 @@ async function processYtsReply(sock, chatId, message) {
             const num = parseStrictInt(text);
             const choice = num === 2 ? 'audio' : num === 1 ? 'video' : null;
             if (!choice) {
+                await addReaction(sock, message, '❌');
                 await sock.sendMessage(chatId, {
                     text: box('❌ ɪɴᴠᴀʟɪᴅ ᴄʜᴏɪᴄᴇ', [
                         '1️⃣ ʀᴇᴘʟʏ 1 ꜰᴏʀ ᴠɪᴅᴇᴏ',
@@ -289,6 +249,7 @@ async function processYtsReply(sock, chatId, message) {
             }
 
             if (processing.has(sender)) {
+                await addReaction(sock, message, '⏳');
                 await sock.sendMessage(chatId, {
                     text: box('⏳ ᴘʟᴇᴀsᴇ ᴡᴀɪᴛ', ['🔄 ᴘʀᴇᴠɪᴏᴜs ᴅᴏᴡɴʟᴏᴀᴅ ɪɴ ᴘʀᴏɢʀᴇss']),
                     ...channelInfo
@@ -298,15 +259,18 @@ async function processYtsReply(sock, chatId, message) {
 
             pendingFormat.delete(quotedMsgId);
             processing.add(sender);
+            
+            // Reaction for processing start
+            await addReaction(sock, message, '⏳');
+
             try {
                 if (choice === 'audio') {
                     await downloadAndSend(sock, chatId, message, pending.video, 'audio', null, null);
                 } else {
-                    // Video ke liye Vajira API se check karo (Quality hamesha 360p aayegi)
+                    // Video ke liye direct Vajira API call karo (Vajira sirf 360p deta hai)
                     const vajiraData = await getVajiraData(pending.video.url, 'video');
                     if (!vajiraData.downloadUrl) throw new Error('No video link');
 
-                    // Ab direct download karo (Kyuki Vajira sirf 360p deta hai)
                     await downloadAndSend(sock, chatId, message, pending.video, 'video', '360', vajiraData);
                 }
             } catch (error) {
@@ -334,6 +298,7 @@ async function processYtsReply(sock, chatId, message) {
 
             const searchData = activeSearches.get(quotedMsgId);
             if (sender !== searchData.sender) {
+                await addReaction(sock, message, '❌');
                 await sock.sendMessage(chatId, {
                     text: box('⛔ ɴᴏᴛ ʏᴏᴜʀ sᴇᴀʀᴄʜ', [
                         '🔍 ᴛʜɪs sᴇᴀʀᴄʜ ᴡᴀs ʀᴇǫᴜᴇsᴛᴇᴅ ʙʏ sᴏᴍᴇᴏɴᴇ ᴇʟsᴇ',
@@ -345,6 +310,7 @@ async function processYtsReply(sock, chatId, message) {
             }
 
             if (num > searchData.videos.length) {
+                await addReaction(sock, message, '❌');
                 await sock.sendMessage(chatId, {
                     text: box('❌ ɪɴᴠᴀʟɪᴅ ɴᴜᴍʙᴇʀ', [
                         `📊 ᴏɴʟʏ ${searchData.videos.length} ᴠɪᴅᴇᴏs ᴀᴠᴀɪʟᴀʙʟᴇ`,
@@ -357,6 +323,9 @@ async function processYtsReply(sock, chatId, message) {
 
             const selectedVideo = searchData.videos[num - 1];
             activeSearches.delete(quotedMsgId);
+
+            // Reaction for number selected
+            await addReaction(sock, message, '🎯');
 
             const askSent = await sock.sendMessage(chatId, {
                 text: box('🎯 ᴄʜᴏᴏsᴇ ꜰᴏʀᴍᴀᴛ', [
@@ -400,7 +369,7 @@ async function downloadAndSend(sock, chatId, message, video, type, quality, vaji
         throw new Error(`Link not found for ${type}`);
     }
 
-    // 📥 Downloading
+    // 📥 Downloading message
     await addReaction(sock, message, '📥');
     await sock.sendMessage(chatId, {
         text: box('📥 ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ', [
