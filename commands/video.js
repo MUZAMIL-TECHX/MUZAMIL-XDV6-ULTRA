@@ -10,7 +10,8 @@ const channelInfo = {
     }
 };
 
-const HECTOR_API = 'https://yt-dl.officialhectormanuel.workers.dev/?url=';
+// Vajira API Base URL
+const VAJIRA_API_BASE = 'https://vajiraofc-apis.vercel.app/api/ytmp4?apikey=VajiraOfc&url=';
 
 // ═══════════════════════════════════════════════════════════
 //                    🛠️ HELPERS
@@ -62,23 +63,25 @@ async function searchVideo(query) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//                    🎬 HECTOR API
+//                    🎬 VAJIRA API
 // ═══════════════════════════════════════════════════════════
-async function getHectorData(youtubeUrl) {
-    const apiUrl = `${HECTOR_API}${encodeURIComponent(youtubeUrl)}`;
+async function getVajiraData(youtubeUrl) {
+    const apiUrl = `${VAJIRA_API_BASE}${encodeURIComponent(youtubeUrl)}`;
     const response = await axios.get(apiUrl, {
         timeout: 30000,
         headers: { 'User-Agent': 'Mozilla/5.0' }
     });
 
-    if (!response.data.status) throw new Error('Hector API failed');
+    // Naye JSON structure ke hisaab se check
+    if (!response.data.success || !response.data.data) {
+        throw new Error('Vajira API failed');
+    }
 
     return {
-        title: response.data.title || 'Video',
-        thumbnail: response.data.thumbnail,
-        audio: response.data.audio,
-        videos: response.data.videos,
-        qualities: response.data.available_qualities
+        title: response.data.data.title,
+        downloadUrl: response.data.data.download?.url,
+        quality: response.data.data.download?.quality,
+        filename: response.data.data.download?.filename
     };
 }
 
@@ -86,7 +89,6 @@ async function getHectorData(youtubeUrl) {
 //                    📥 BUFFER DOWNLOAD (ULTRA FAST)
 // ═══════════════════════════════════════════════════════════
 async function downloadBuffer(url) {
-    // ⚡ Ultra fast: direct stream to buffer, no decompression delays
     const response = await axios.get(url, {
         responseType: 'arraybuffer',
         timeout: 120000,
@@ -107,7 +109,7 @@ async function downloadBuffer(url) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//                    🚀 MAIN VIDEO COMMAND (ULTRA FAST)
+//                    🚀 MAIN VIDEO COMMAND
 // ═══════════════════════════════════════════════════════════
 async function videoCommand(sock, chatId, message) {
     try {
@@ -126,15 +128,14 @@ async function videoCommand(sock, chatId, message) {
                     '🔍 ᴇxᴀᴍᴘʟᴇ 1 : .ᴠɪᴅᴇᴏ ᴘᴀsᴏᴏʀɪ',
                     '🔍 ᴇxᴀᴍᴘʟᴇ 2 : .ᴠɪᴅᴇᴏ ᴀᴛɪꜰ ᴀsʟᴀᴍ',
                     '━━━━━━━━━━━━━━━━━━',
-                    '📺 ǫᴜᴀʟɪᴛʏ : 360ᴘ (ᴅᴇꜰᴀᴜʟᴛ)',
-                    '⚡ ᴍᴏᴅᴇ : ᴜʟᴛʀᴀ ꜰᴀsᴛ'
+                    '⚡ ᴘᴏᴡᴇʀᴇᴅ ʙʏ : ᴠᴀᴊɪʀᴀ ᴀᴘɪ'
                 ]),
                 ...channelInfo
             }, { quoted: message });
         }
 
         // ═══════════════════════════════════════
-        // STEP 1 & 2 PARALLEL: SEARCH → HECTOR
+        // STEP 1: SEARCH
         // ═══════════════════════════════════════
         await addReaction(sock, message, '🔍');
 
@@ -154,10 +155,13 @@ async function videoCommand(sock, chatId, message) {
 
         await addReaction(sock, message, '⏳');
 
-        let hectorData;
+        // ═══════════════════════════════════════
+        // STEP 2: VAJIRA API
+        // ═══════════════════════════════════════
+        let vajiraData;
         try {
-            hectorData = await getHectorData(videoData.url);
-        } catch (hectorError) {
+            vajiraData = await getVajiraData(videoData.url);
+        } catch (vajiraError) {
             await addReaction(sock, message, '❌');
             return await sock.sendMessage(chatId, {
                 text: box('❌ ꜰᴀɪʟᴇᴅ', [
@@ -169,17 +173,11 @@ async function videoCommand(sock, chatId, message) {
         }
 
         // ═══════════════════════════════════════
-        // STEP 3: THUMBNAIL + START DOWNLOAD (PARALLEL)
+        // STEP 3: THUMBNAIL + START DOWNLOAD
         // ═══════════════════════════════════════
         await addReaction(sock, message, '🖼️');
 
-        const videoUrl = hectorData.videos?.['360']
-                      || hectorData.videos?.['240']
-                      || hectorData.videos?.['144']
-                      || hectorData.videos?.['480']
-                      || hectorData.videos?.['720'];
-
-        if (!videoUrl) {
+        if (!vajiraData.downloadUrl) {
             await addReaction(sock, message, '❌');
             return await sock.sendMessage(chatId, {
                 text: box('❌ ɴᴏ ᴠɪᴅᴇᴏ ᴜʀʟ', [
@@ -190,19 +188,18 @@ async function videoCommand(sock, chatId, message) {
             }, { quoted: message });
         }
 
-        // ⚡ Start buffer download IN PARALLEL with thumbnail send
-        const bufferPromise = downloadBuffer(videoUrl);
+        // Start buffer download IN PARALLEL with thumbnail send
+        const bufferPromise = downloadBuffer(vajiraData.downloadUrl);
 
-        // Send thumbnail (don't wait for download to finish)
+        // Send thumbnail
         try {
-            const thumbnailUrl = hectorData.thumbnail || videoData.thumbnail;
             await sock.sendMessage(chatId, {
-                image: { url: thumbnailUrl },
+                image: { url: videoData.thumbnail },
                 caption: box('🎬 ᴠɪᴅᴇᴏ ꜰᴏᴜɴᴅ', [
-                    `📌 ᴛɪᴛʟᴇ : ${trim(hectorData.title, 38)}`,
+                    `📌 ᴛɪᴛʟᴇ : ${trim(vajiraData.title, 38)}`,
                     `⏱️ ᴅᴜʀᴀᴛɪᴏɴ : ${videoData.timestamp || 'N/A'}`,
                     `📺 ᴄʜᴀɴɴᴇʟ : ${trim(videoData.author, 25)}`,
-                    `📺 ǫᴜᴀʟɪᴛʏ : 360ᴘ`,
+                    `📺 ǫᴜᴀʟɪᴛʏ : ${vajiraData.quality || '360p'}`,
                     '━━━━━━━━━━━━━━━━━━',
                     '⚡ ᴜʟᴛʀᴀ ꜰᴀsᴛ ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ...'
                 ]),
@@ -226,12 +223,12 @@ async function videoCommand(sock, chatId, message) {
             // Fallback: direct URL
             try {
                 await sock.sendMessage(chatId, {
-                    video: { url: videoUrl },
+                    video: { url: vajiraData.downloadUrl },
                     mimetype: 'video/mp4',
-                    fileName: `${hectorData.title.replace(/[^\w\s-]/g, '')}.mp4`,
+                    fileName: `${vajiraData.title.replace(/[^\w\s-]/g, '')}.mp4`,
                     caption: box('✅ ᴠɪᴅᴇᴏ ʀᴇᴀᴅʏ', [
-                        `📌 ᴛɪᴛʟᴇ : ${trim(hectorData.title, 30)}`,
-                        '📺 ǫᴜᴀʟɪᴛʏ : 360ᴘ',
+                        `📌 ᴛɪᴛʟᴇ : ${trim(vajiraData.title, 30)}`,
+                        `📺 ǫᴜᴀʟɪᴛʏ : ${vajiraData.quality || '360p'}`,
                         '✅ sᴛᴀᴛᴜs : ᴅᴏᴡɴʟᴏᴀᴅᴇᴅ'
                     ]),
                     ...channelInfo
@@ -252,16 +249,16 @@ async function videoCommand(sock, chatId, message) {
         }
 
         // ═══════════════════════════════════════
-        // STEP 5: SEND VIDEO (ULTRA FAST)
+        // STEP 5: SEND VIDEO
         // ═══════════════════════════════════════
         await sock.sendMessage(chatId, {
             video: videoBuffer,
             mimetype: 'video/mp4',
-            fileName: `${hectorData.title.replace(/[^\w\s-]/g, '')}.mp4`,
+            fileName: `${vajiraData.title.replace(/[^\w\s-]/g, '')}.mp4`,
             caption: box('✅ ᴠɪᴅᴇᴏ ʀᴇᴀᴅʏ', [
-                `📌 ᴛɪᴛʟᴇ : ${trim(hectorData.title, 30)}`,
+                `📌 ᴛɪᴛʟᴇ : ${trim(vajiraData.title, 30)}`,
                 `📏 sɪᴢᴇ : ${(videoBuffer.length / 1024 / 1024).toFixed(1)} MB`,
-                '📺 ǫᴜᴀʟɪᴛʏ : 360ᴘ',
+                `📺 ǫᴜᴀʟɪᴛʏ : ${vajiraData.quality || '360p'}`,
                 '⚡ ᴍᴏᴅᴇ : ᴜʟᴛʀᴀ ꜰᴀsᴛ'
             ]),
             ...channelInfo
