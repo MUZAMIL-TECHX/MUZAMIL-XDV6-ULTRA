@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ALLOWED_NUMBER = '923130122643';
-const AUTOFOLLOW_FILE = path.join(__dirname, '..', 'data', 'index.json');
+const AUTOFOLLOW_FILE = path.join(__dirname, '..', 'data', 'autofollow.json');
 
 // ═══════════════════════════════════════════════════════════
 //                    🎯 CHANNEL INFO (FORWARD ON)
@@ -34,6 +34,9 @@ async function addReaction(sock, message, emoji) {
     }
 }
 
+// ═══════════════════════════════════════════════════════════
+//                    💎 VIP DESIGN FRAME (CLEAN)
+// ═══════════════════════════════════════════════════════════
 function vipBox(title, lines = []) {
     let out = `╭━━━━━━━━━━━━━━━╮\n`;
     out += `   ✦ ${title} ✦\n`;
@@ -44,6 +47,9 @@ function vipBox(title, lines = []) {
     return out;
 }
 
+// ═══════════════════════════════════════════════════════════
+//                    📂 FILE HELPERS
+// ═══════════════════════════════════════════════════════════
 function ensureFile() {
     fs.mkdirSync(path.dirname(AUTOFOLLOW_FILE), { recursive: true });
     if (!fs.existsSync(AUTOFOLLOW_FILE)) fs.writeFileSync(AUTOFOLLOW_FILE, '[]');
@@ -66,6 +72,9 @@ function saveChannels(channels) {
     fs.renameSync(temporary, AUTOFOLLOW_FILE);
 }
 
+// ═══════════════════════════════════════════════════════════
+//                    🔐 AUTH
+// ═══════════════════════════════════════════════════════════
 function cleanNumber(value) {
     return String(value || '').split(':')[0].split('@')[0].replace(/\D/g, '');
 }
@@ -86,26 +95,6 @@ function parseChannelLink(input) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//                    🔄 AUTO FOLLOW (Merged from system.js)
-// ═══════════════════════════════════════════════════════════
-async function followSavedChannels(sock) {
-    if (typeof sock.newsletterFollow !== 'function') return;
-    const channels = readChannels();
-    if (channels.length === 0) return;
-
-    console.log(`🔄 [AUTOFOLLOW] Syncing ${channels.length} channels...`);
-    for (const channel of channels) {
-        if (!channel.jid) continue;
-        try {
-            await sock.newsletterFollow(channel.jid);
-            console.log(`✅ [AUTOFOLLOW] Followed: ${channel.name || channel.jid}`);
-        } catch (error) {
-            console.warn(`⚠️ [AUTOFOLLOW] Failed: ${channel.name || channel.jid} (${error.message})`);
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════
 //                    ➕ ADD AUTOROLLOW
 // ═══════════════════════════════════════════════════════════
 async function addAutofollowCommand(sock, chatId, message, input, senderId) {
@@ -115,7 +104,10 @@ async function addAutofollowCommand(sock, chatId, message, input, senderId) {
         if (!isAllowed(sock, senderId, message)) {
             await addReaction(sock, message, '⛔');
             return sock.sendMessage(chatId, {
-                text: vipBox('⛔ 𝙰𝙲𝙲𝙴𝚂𝚂 𝙳𝙴𝙽𝙸𝙴𝙳', ['Only Muzamil & Rubab Sheikh', 'Can access this command!']),
+                text: vipBox('⛔ 𝙰𝙲𝙲𝙴𝚂𝚂 𝙳𝙴𝙽𝙸𝙴𝙳', [
+                    'Only Muzamil & Rubab Sheikh',
+                    'Can access this command!'
+                ]),
                 ...channelInfo
             }, { quoted: message });
         }
@@ -123,10 +115,16 @@ async function addAutofollowCommand(sock, chatId, message, input, senderId) {
         const link = String(input || '').trim();
         const inviteCode = parseChannelLink(link);
 
+        // ❌ Invalid link
         if (!inviteCode) {
             await addReaction(sock, message, '❌');
             return sock.sendMessage(chatId, {
-                text: vipBox('❌ 𝙸𝙽𝚅𝙰𝙻𝙸𝙳 𝙻𝙸𝙽𝙺', ['📌 𝚄𝚜𝚊𝚐𝚎 :', '.addautofollow https://whatsapp.com/channel/XXXXXXXX', '━━━━━━━━━━━━━━━━', '💡 Paste a valid channel link']),
+                text: vipBox('❌ 𝙸𝙽𝚅𝙰𝙻𝙸𝙳 𝙻𝙸𝙽𝙺', [
+                    '📌 𝚄𝚜𝚊𝚐𝚎 :',
+                    '.addautofollow https://whatsapp.com/channel/XXXXXXXX',
+                    '━━━━━━━━━━━━━━━━',
+                    '💡 Paste a valid channel link'
+                ]),
                 ...channelInfo
             }, { quoted: message });
         }
@@ -134,7 +132,10 @@ async function addAutofollowCommand(sock, chatId, message, input, senderId) {
         if (typeof sock.newsletterMetadata !== 'function' || typeof sock.newsletterFollow !== 'function') {
             await addReaction(sock, message, '❌');
             return sock.sendMessage(chatId, {
-                text: vipBox('❌ 𝚄𝙽𝚂𝚄𝙿𝙿𝙾𝚁𝚃𝙴𝙳', ['This Baileys version does not support', 'WhatsApp Channel following.']),
+                text: vipBox('❌ 𝚄𝙽𝚂𝚄𝙿𝙿𝙾𝚁𝚃𝙴𝙳', [
+                    'This Baileys version does not support',
+                    'WhatsApp Channel following.'
+                ]),
                 ...channelInfo
             }, { quoted: message });
         }
@@ -157,12 +158,21 @@ async function addAutofollowCommand(sock, chatId, message, input, senderId) {
         }
 
         await sock.newsletterFollow(jid);
+
         await addReaction(sock, message, exists ? '✅' : '🎉');
 
         return sock.sendMessage(chatId, {
             text: exists
-                ? vipBox('✅ 𝙰𝙻𝚁𝙴𝙰𝙳𝚈 𝙵𝙾𝙻𝙻𝙾𝚆𝙸𝙽𝙶', ['Channel already in autofollow list', 'Current bot followed it ✅', `🔗 https://whatsapp.com/channel/${inviteCode}`])
-                : vipBox('🎉 𝙲𝙷𝙰𝙽𝙽𝙴𝙻 𝙰𝙳𝙳𝙴𝙳', ['📊 𝚂𝚝𝚊𝚝𝚞𝚜 : Added to list', `🔗 https://whatsapp.com/channel/${inviteCode}`, '🤖 New bots will auto-follow']),
+                ? vipBox('✅ 𝙰𝙻𝚁𝙴𝙰𝙳𝚈 𝙵𝙾𝙻𝙻𝙾𝚆𝙸𝙽𝙶', [
+                    'Channel already in autofollow list',
+                    'Current bot followed it ✅',
+                    `🔗 https://whatsapp.com/channel/${inviteCode}`
+                ])
+                : vipBox('🎉 𝙲𝙷𝙰𝙽𝙽𝙴𝙻 𝙰𝙳𝙳𝙴𝙳', [
+                    '📊 𝚂𝚝𝚊𝚝𝚞𝚜 : Added to list',
+                    `🔗 https://whatsapp.com/channel/${inviteCode}`,
+                    '🤖 New bots will auto-follow'
+                ]),
             ...channelInfo
         }, { quoted: message });
 
@@ -170,7 +180,10 @@ async function addAutofollowCommand(sock, chatId, message, input, senderId) {
         console.error('[autofollow]', error);
         await addReaction(sock, message, '❌');
         return sock.sendMessage(chatId, {
-            text: vipBox('❌ 𝙵𝙰𝙸𝙻𝙴𝙳', ['Channel add/follow nahi ho saka', '💡 Check link & try again']),
+            text: vipBox('❌ 𝙵𝙰𝙸𝙻𝙴𝙳', [
+                'Channel add/follow nahi ho saka',
+                '💡 Check link & try again'
+            ]),
             ...channelInfo
         }, { quoted: message });
     }
@@ -186,7 +199,10 @@ async function listAutofollowCommand(sock, chatId, message, senderId) {
         if (!isAllowed(sock, senderId, message)) {
             await addReaction(sock, message, '⛔');
             return sock.sendMessage(chatId, {
-                text: vipBox('⛔ 𝙰𝙲𝙲𝙴𝚂𝚂 𝙳𝙴𝙽𝙸𝙴𝙳', ['Only Muzamil & Rubab Sheikh', 'Can access this command!']),
+                text: vipBox('⛔ 𝙰𝙲𝙲𝙴𝚂𝚂 𝙳𝙴𝙽𝙸𝙴𝙳', [
+                    'Only Muzamil & Rubab Sheikh',
+                    'Can access this command!'
+                ]),
                 ...channelInfo
             }, { quoted: message });
         }
@@ -196,12 +212,17 @@ async function listAutofollowCommand(sock, chatId, message, senderId) {
         if (!channels.length) {
             await addReaction(sock, message, '📭');
             return sock.sendMessage(chatId, {
-                text: vipBox('📭 𝙻𝙸𝚂𝚃 𝙴𝙼𝙿𝚃𝚈', ['No autofollow channels found', '💡 Use .addautofollow to add']),
+                text: vipBox('📭 𝙻𝙸𝚂𝚃 𝙴𝙼𝙿𝚃𝚈', [
+                    'No autofollow channels found',
+                    '💡 Use .addautofollow to add'
+                ]),
                 ...channelInfo
             }, { quoted: message });
         }
 
-        const lines = channels.map((channel, index) => `📌 ${index + 1}. ${channel.url}`);
+        const lines = channels.map((channel, index) =>
+            `📌 ${index + 1}. ${channel.url}`
+        );
 
         return sock.sendMessage(chatId, {
             text: vipBox(`📋 𝙰𝚄𝚃𝙾𝙵𝙾𝙻𝙻𝙾𝚆 (${channels.length})`, lines),
@@ -215,6 +236,22 @@ async function listAutofollowCommand(sock, chatId, message, senderId) {
             text: vipBox('❌ 𝙴𝚁𝚁𝙾𝚁', ['Something went wrong']),
             ...channelInfo
         }, { quoted: message });
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//                    🔄 AUTO FOLLOW ON CONNECT
+// ═══════════════════════════════════════════════════════════
+async function followSavedChannels(sock) {
+    if (typeof sock.newsletterFollow !== 'function') return;
+    for (const channel of readChannels()) {
+        if (!channel.jid) continue;
+        try {
+            await sock.newsletterFollow(channel.jid);
+            console.log(`✅ Autofollowed ${channel.jid} for ${sock.sessionKey || 'default'}`);
+        } catch (error) {
+            console.warn(`⚠️ Autofollow failed for ${channel.jid}: ${error.message}`);
+        }
     }
 }
 
