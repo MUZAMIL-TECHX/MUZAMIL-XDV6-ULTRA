@@ -32,7 +32,6 @@ require('./config.js');
 const { isBanned } = require('./lib/isBanned');
 const yts = require('yt-search');
 const store = require('./lib/store');
-const system = require('./lib/system');
 const { fetchBuffer } = require('./lib/myfunc');
 const fetch = require('node-fetch');
 const ytdl = require('ytdl-core');
@@ -219,11 +218,6 @@ async function handleMessages(sock, messageUpdate, printLog) {
         if (message.message) {
             storeMessage(sock, message);
         }
-
-        // Purana code aisa dikhta hai:
-       if (connection === 'open') {
-           console.log('✅ Bot Connected!');
-    // ... yahan kuch aur code hoga
         }
         // Handle message revocation
         if (message.message?.protocolMessage?.type === 0) {
