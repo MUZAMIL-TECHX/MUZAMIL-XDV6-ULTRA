@@ -218,7 +218,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
         if (message.message) {
             storeMessage(sock, message);
         }
-        }
+
         // Handle message revocation
         if (message.message?.protocolMessage?.type === 0) {
             await handleMessageRevocation(sock, message);
