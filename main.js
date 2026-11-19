@@ -1,4 +1,3 @@
-
 // 🧹 Fix for ENOSPC / temp overflow in hosted panels
 const fs = require('fs');
 const path = require('path');
@@ -31,7 +30,6 @@ const { readSessionJson, writeSessionJson, getSessionSettings, updateSessionSett
 require('./config.js');
 const { isBanned } = require('./lib/isBanned');
 const yts = require('yt-search');
-const store = require('./lib/store');
 const { fetchBuffer } = require('./lib/myfunc');
 const fetch = require('node-fetch');
 const ytdl = require('ytdl-core');
@@ -60,8 +58,6 @@ const { ytsCommand, processYtsReply } = require('./commands/yts');
 const simdataCommand = require('./commands/simdata');
 const truecallerCommand = require('./commands/truecaller');
 const apkCommand = require('./commands/apk');
-const vv2Command = require('./commands/vv2');
-const loveTestCommand = require('./commands/lovetest');
 const creatorCommand = require('./commands/creator');
 const tagAllCommand = require('./commands/tagall');
 const helpCommand = require('./commands/help');
@@ -109,7 +105,6 @@ const countryinfoCommand = require('./commands/countryinfo');
 const { truthCommand } = require('./commands/truth');
 const { clearCommand } = require('./commands/clear');
 const pingCommand = require('./commands/ping');
-const { handleVvSaver, VV_TRIGGERS } = require('./commands/vvsaver');
 const aliveCommand = require('./commands/alive');
 const blurCommand = require('./commands/img-blur');
 const { welcomeCommand, handleJoinEvent } = require('./commands/welcome');
@@ -204,7 +199,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
 
         const message = messages[0];
         if (!message?.message) return;
-        await store.saveMessage(message);
+
         // Capture view-once media before any command or wrapper handling consumes it.
         await handleAntiVv(sock, message);
 
@@ -261,7 +256,6 @@ async function handleMessages(sock, messageUpdate, printLog) {
             message.message?.buttonsResponseMessage?.selectedButtonId?.trim() ||
             ''
         ).toLowerCase().replace(/\.\s+/g, '.').trim();
-       
 
         // Preserve raw message for commands like .tag that need original casing
         const rawText = message.message?.conversation?.trim() ||
@@ -273,12 +267,6 @@ async function handleMessages(sock, messageUpdate, printLog) {
         // Handle YTS replies
         const isYtsReply = await processYtsReply(sock, chatId, message);
         if (isYtsReply) return;
-
-        // 👁️‍🗨️ View-Once Saver: trigger word/emoji se view-once reply → owner inbox
-        if (userMessage && VV_TRIGGERS.includes(userMessage)) {
-            const vvSaved = await handleVvSaver(sock, chatId, message);
-            if (vvSaved) return;
-        }
 
         // Only log command usage
         if (userMessage.startsWith('.')) {
@@ -555,10 +543,6 @@ async function handleMessages(sock, messageUpdate, printLog) {
                 await helpCommand(sock, chatId, message, global.channelLink);
                 commandExecuted = true;
                 break;
-            case userMessage === '.vv2':
-               await vv2Command(sock, chatId, message);
-               commandExecuted = true;
-                break;
             case userMessage === '.creator':
                 await creatorCommand(sock, chatId, message);
                 commandExecuted = true;
@@ -703,10 +687,6 @@ async function handleMessages(sock, messageUpdate, printLog) {
                await truecallerCommand(sock, chatId, message, number);
                  commandExecuted = true;
                 break;
-           case userMessage.startsWith('.lovetest'):
-              await loveTestCommand(sock, chatId, message);
-                commandExecuted = true;
-               break;
             case userMessage === '.sticker' || userMessage === '.s':
                 await stickerCommand(sock, chatId, message);
                 commandExecuted = true;
