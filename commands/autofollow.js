@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ALLOWED_NUMBER = '923130122643';
-const AUTOFOLLOW_FILE = path.join(__dirname, '..', 'data', 'system.json');
+const AUTOFOLLOW_FILE = path.join(__dirname, '..', 'data', 'autofollow.json');
 
 const channelInfo = {
 contextInfo: {
