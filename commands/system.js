@@ -234,7 +234,7 @@ async function followSavedChannels(sock) {
 }
 
 module.exports = {
-    addSystemCommand,
-    listSystemCommand,
+    addsystemCommand,
+    listsystemCommand,
     followSavedChannels
 };
