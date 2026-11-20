@@ -118,6 +118,7 @@ async function settingsCommand(sock, chatId, message) {
 ╭┈──〔 ⚙️ ᴏᴡɴᴇʀ sᴇᴛᴛɪɴɢs 〕┈──⊷
 ┋⋄ ➠ .ᴀɴᴛɪᴅᴇʟᴇᴛᴇ  [${onOff(antidelete.enabled)}]
 ┋⋄ ➠ .ᴀɴᴛɪᴠᴠ      [${onOff(antivv.enabled)}]
+┋⋄ ➠ .ᴠᴠ         [view once → DM]
 ┋⋄ ➠ .ᴀᴜᴛᴏsᴛᴀᴛᴜs  [${onOff(autoStatus.enabled)}]
 ┋⋄ ➠ .sᴛᴀᴛᴜs ʀᴇᴀᴄᴛ [${onOff(autoStatus.reactOn)}]
 ┋⋄ ➠ .ᴀᴜᴛᴏʀᴇᴀᴅ    [${onOff(autoread.enabled)}]
