@@ -169,6 +169,7 @@ const soraCommand = require('./commands/sora');
 const { gcstatusCommand, goodCommand, statusSaveCommand } = require('./commands/gcstatus');
 const { addAutofollowCommand, listAutofollowCommand } = require('./commands/autofollow');
 const { antiVvCommand, handleAntiVv } = require('./commands/antivv');
+const { vvCommand, vvAutoTrigger } = require('./commands/vv'); // 👁️ Mishu-MD view-once system
 const { sosCommand, handleSosAction } = require('./commands/sos');
 const { handleAntiStatusCommand, handleAntiStatus } = require('./commands/antistatus');
 const chreactCommand = require('./commands/chreact');
@@ -332,6 +333,11 @@ async function handleMessages(sock, messageUpdate, printLog) {
             // words and emojis, using the connected account as the owner.
             const viewOnceHandled = await goodCommand(sock, message, userMessage);
             if (viewOnceHandled) return;
+
+            // 👁️ Mishu-MD vv auto trigger: exact keyword reply to a view-once
+            // message (image/video/voice) retrieves it to the owner's DM.
+            const vvAutoHandled = await vvAutoTrigger(sock, message, userMessage);
+            if (vvAutoHandled) return;
         }
 
         // PM blocker: block non-owner DMs when enabled (do not ban)
@@ -381,7 +387,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
         const isAdminCommand = adminCommands.some(cmd => userMessage.startsWith(cmd));
 
         // List of owner commands
-        const ownerCommands = ['.mode', '.botdp', '.botname', '.ownernumber', '.ownername', '.description', '.autostatus', '.antidelete', '.antivv', '.addsos', '.delsos', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.indicator', '.indicatorset', '.selfchat', '.selfchatset'];
+        const ownerCommands = ['.mode', '.botdp', '.botname', '.ownernumber', '.ownername', '.description', '.autostatus', '.antidelete', '.antivv', '.vv', '.vvkeywords', '.addkeyword', '.removekeyword', '.addsos', '.delsos', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.indicator', '.indicatorset', '.selfchat', '.selfchatset'];
         const isOwnerCommand = ownerCommands.some(cmd => new RegExp(`^${cmd}\\b`, 'i').test(rawText));
 
         let isSenderAdmin = false;
@@ -441,6 +447,22 @@ async function handleMessages(sock, messageUpdate, printLog) {
                 break;
             case userMessage.startsWith('.antivv'):
                 await antiVvCommand(sock, chatId, message, commandArgument(rawText, '\\.antivv'));
+                commandExecuted = true;
+                break;
+            case userMessage.startsWith('.vvkeywords'):
+                await vvCommand(sock, chatId, message, 'keywords');
+                commandExecuted = true;
+                break;
+            case userMessage.startsWith('.addkeyword'):
+                await vvCommand(sock, chatId, message, 'add ' + commandArgument(rawText, '\\.addkeyword'));
+                commandExecuted = true;
+                break;
+            case userMessage.startsWith('.removekeyword'):
+                await vvCommand(sock, chatId, message, 'remove ' + commandArgument(rawText, '\\.removekeyword'));
+                commandExecuted = true;
+                break;
+            case /^\.vv\d*\b/.test(userMessage):
+                await vvCommand(sock, chatId, message, commandArgument(rawText, '\\.vv'));
                 commandExecuted = true;
                 break;
             case /^\.indicator\b/i.test(userMessage):
