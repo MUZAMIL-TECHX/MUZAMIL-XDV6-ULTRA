@@ -3,7 +3,7 @@
 //   🔥 .vv | .vv2 | .vvkeywords | .addkeyword | .removekeyword
 //   🎀 Auto keyword trigger (no prefix) — owner only
 // ═══════════════════════════════════════════════════════════
-const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+const vo = require('../lib/viewonce');
 const { fakevCard } = require('../lib/fakevCard');
 const isOwnerOrSudo = require('../lib/isOwner');
 const { readSessionJson, writeSessionJson } = require('../lib/session_data');
@@ -34,26 +34,33 @@ const DEFAULT_KEYWORDS = [
     "🌝", "🥵", "💋", "👍", "🌚", "😩"
 ];
 
+// Core no-prefix triggers (from the Arslan-MD vv plugin) — configurable in
+// settings.js → VV_TRIGGERS. These also answer with an error when the reply
+// is NOT a view-once; the softer keywords below stay silent in that case.
+function getCoreTriggers() {
+    const list = Array.isArray(settings.VV_TRIGGERS) && settings.VV_TRIGGERS.length
+        ? settings.VV_TRIGGERS
+        : ['vv', 'wah'];
+    return list.map(t => String(t).trim().toLowerCase()).filter(Boolean);
+}
+
 function getKeywords() {
+    let extra = [];
     try {
         const saved = readSessionJson(null, 'vvkeywords.json', { extra: [] });
-        const extra = Array.isArray(saved.extra) ? saved.extra : [];
-        return Array.from(new Set([...DEFAULT_KEYWORDS, ...extra]));
-    } catch (e) {
-        return [...DEFAULT_KEYWORDS];
-    }
+        extra = Array.isArray(saved.extra) ? saved.extra : [];
+    } catch (e) { /* ignore */ }
+    let legacy = [];
+    try { legacy = Array.from(require('./gcstatus').VIEW_ONCE_SAVE_TRIGGERS || []); } catch (e) { /* ignore */ }
+    return Array.from(new Set([...getCoreTriggers(), ...DEFAULT_KEYWORDS, ...legacy, ...extra]));
 }
 
 // ═══════════════════════════════════════════════════════════
 //                    🛠️ HELPERS
 // ═══════════════════════════════════════════════════════════
-async function addReaction(sock, message, emoji) {
-    try {
-        await sock.sendMessage(message.key.remoteJid, {
-            react: { text: emoji, key: message.key }
-        });
-    } catch (error) { }
-}
+// The vv system never reacts (owner request) — kept as a no-op so the
+// sub-command code below stays untouched.
+async function addReaction() { /* no react on .vv */ }
 
 function vipBox(title, lines = []) {
     let out = `╭━━━━━━━━━━━━━━━╮\n`;
@@ -65,32 +72,8 @@ function vipBox(title, lines = []) {
     return out;
 }
 
-function unwrapMessage(message) {
-    let current = message;
-    while (current?.ephemeralMessage?.message) current = current.ephemeralMessage.message;
-    while (current?.viewOnceMessage?.message) current = current.viewOnceMessage.message;
-    while (current?.viewOnceMessageV2?.message) current = current.viewOnceMessageV2.message;
-    while (current?.viewOnceMessageV2Extension?.message) current = current.viewOnceMessageV2Extension.message;
-    return current || {};
-}
-
 function quotedMessageOf(message) {
-    const contextInfo =
-        message?.message?.extendedTextMessage?.contextInfo ||
-        message?.message?.imageMessage?.contextInfo ||
-        message?.message?.videoMessage?.contextInfo ||
-        message?.message?.audioMessage?.contextInfo ||
-        message?.message?.documentMessage?.contextInfo ||
-        {};
-    return contextInfo.quotedMessage || null;
-}
-
-function ownerJid(sock) {
-    const connected = String(sock?.user?.id || sock?.user?.jid || '')
-        .split('@')[0]
-        .split(':')[0]
-        .replace(/[^\d]/g, '');
-    return connected ? `${connected}@s.whatsapp.net` : null;
+    return vo.getQuotedMessage(message);
 }
 
 function formatBytes(bytes) {
@@ -101,157 +84,88 @@ function formatBytes(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// ── Detect view-once content inside a quoted raw message ──
-function detectViewOnce(quotedRaw) {
-    if (!quotedRaw) return null;
-    let wrapped = false;
-    let content = quotedRaw;
-    if (content.viewOnceMessage?.message) { wrapped = true; content = content.viewOnceMessage.message; }
-    else if (content.viewOnceMessageV2?.message) { wrapped = true; content = content.viewOnceMessageV2.message; }
-    else if (content.viewOnceMessageV2Extension?.message) { wrapped = true; content = content.viewOnceMessageV2Extension.message; }
-
-    const image = content.imageMessage;
-    const video = content.videoMessage;
-    const audio = content.audioMessage;
-
-    if (image && (wrapped || image.viewOnce)) {
-        return {
-            media: image, type: 'image', mimetype: image.mimetype || 'image/jpeg',
-            caption: image.caption || '', ptt: false
-        };
-    }
-    if (video && (wrapped || video.viewOnce)) {
-        return {
-            media: video, type: 'video', mimetype: video.mimetype || 'video/mp4',
-            caption: video.caption || '', ptt: false
-        };
-    }
-    if (audio && (wrapped || audio.viewOnce)) {
-        return {
-            media: audio, type: 'audio', mimetype: audio.mimetype || 'audio/ogg; codecs=opus',
-            caption: '', ptt: Boolean(audio.ptt)
-        };
-    }
-    return null;
+function typeLabel(mtype) {
+    if (mtype === 'image') return 'image';
+    if (mtype === 'video') return 'video';
+    return 'voice note';
 }
 
-// ── Robust download: direct → message store fallback ──
-async function downloadMediaBuffer(sock, message, media, type) {
-    try {
-        const stream = await downloadContentFromMessage(media, type);
-        const chunks = [];
-        for await (const chunk of stream) chunks.push(chunk);
-        const buf = Buffer.concat(chunks);
-        if (buf.length) return buf;
-    } catch (e) {
-        console.log('[VV] Direct download failed, trying store:', e.message);
-    }
-
-    try {
-        const store = sock?._msgStore || global._msgStore;
-        const quotedMsgId = message?.message?.extendedTextMessage?.contextInfo?.stanzaId;
-        if (store instanceof Map && quotedMsgId) {
-            const chat = store.get(message.key.remoteJid);
-            let original = chat?.get(quotedMsgId);
-            if (!original) {
-                for (const [, c] of store) {
-                    if (c instanceof Map && c.get(quotedMsgId)?.message) { original = c.get(quotedMsgId); break; }
-                }
-            }
-            if (original?.message) {
-                const inner = unwrapMessage(original.message)[type + 'Message'];
-                if (inner && inner.mediaKey) {
-                    const stream = await downloadContentFromMessage(inner, type);
-                    const chunks = [];
-                    for await (const chunk of stream) chunks.push(chunk);
-                    const buf = Buffer.concat(chunks);
-                    if (buf.length) return buf;
-                }
-            }
-        }
-    } catch (e) {
-        console.log('[VV] Store download failed:', e.message);
-    }
-    return null;
+async function say(sock, chatId, message, title, lines) {
+    return sock.sendMessage(chatId, { text: vipBox(title, lines), ...channelInfo }, { quoted: message });
 }
 
 // ═══════════════════════════════════════════════════════════
-//          🔥 CORE: RETRIEVE VIEW-ONCE → SEND TO OWNER DM
+//   🔥 CORE: RETRIEVE VIEW-ONCE → SEND TO THE BOT'S OWN CHAT
+//   (bot number = owner's "Message yourself" chat). No reactions.
+//   Returns true when the message was handled (success OR a reply was
+//   sent), false when it was not a view-once reply and nothing was sent.
 // ═══════════════════════════════════════════════════════════
-async function handleViewOnce(sock, chatId, message) {
-    const quotedRaw = quotedMessageOf(message);
-    const detected = detectViewOnce(quotedRaw);
+async function handleViewOnce(sock, chatId, message, { quiet = false } = {}) {
+    const result = await vo.retrieveViewOnce(sock, message);
 
-    if (!quotedRaw) {
-        await sock.sendMessage(chatId, {
-            text: vipBox('👁️ 𝚅𝙸𝙴𝚆 𝙾𝙽𝙲𝙴', [
-                'Reply to a view once image/video/voice',
-                'Then use: .vv'
-            ]),
-            ...channelInfo
-        }, { quoted: message });
-        return false;
+    if (result.status === 'no-quote') {
+        if (quiet) return false;
+        await say(sock, chatId, message, '📥 𝚅𝙸𝙴𝚆 𝙾𝙽𝙲𝙴', [
+            'Reply to a view-once photo, video or voice note',
+            'Then send: .vv (or just vv)'
+        ]);
+        return true;
+    }
+    if (result.status === 'not-viewonce') {
+        if (quiet) return false;
+        await say(sock, chatId, message, '❌ 𝙽𝙾𝚃 𝚅𝙸𝙴𝚆-𝙾𝙽𝙲𝙴', [
+            "That message isn't a view-once photo/video/voice note"
+        ]);
+        return true;
+    }
+    if (result.status === 'unavailable') {
+        await say(sock, chatId, message, '📵 𝚅𝙸𝙴𝚆 𝙾𝙽𝙲𝙴 𝚄𝙽𝙰𝚅𝙰𝙸𝙻𝙰𝙱𝙻𝙴', [
+            'WhatsApp did not deliver the media to this device',
+            'Reconnect the number once — the bot now runs as',
+            'Android automatically after pairing'
+        ]);
+        return true;
+    }
+    if (result.status !== 'ok') {
+        await say(sock, chatId, message, '❌ 𝙳𝙾𝚆𝙽𝙻𝙾𝙰𝙳 𝙵𝙰𝙸𝙻𝙴𝙳', [
+            result.status === 'no-key'
+                ? 'WhatsApp did not give the media payload to this device'
+                : 'Could not download the view-once media',
+            'Open it on your phone, let it load, then quote it again'
+        ]);
+        return true;
     }
 
-    if (!detected) {
-        await sock.sendMessage(chatId, {
-            text: vipBox('❌ 𝙽𝙾𝚃 𝚅𝙸𝙴𝚆-𝙾𝙽𝙲𝙴', [
-                'Quoted message is not a view once media',
-                'Reply to a view once image/video/voice'
-            ]),
-            ...channelInfo
-        }, { quoted: message });
-        return false;
-    }
-
-    await addReaction(sock, message, '👁️');
-
-    const buffer = await downloadMediaBuffer(sock, message, detected.media, detected.type);
-    if (!buffer) {
-        await addReaction(sock, message, '❌');
-        await sock.sendMessage(chatId, {
-            text: vipBox('❌ 𝙳𝙾𝚆𝙽𝙻𝙾𝙰𝙳 𝙵𝙰𝙸𝙻𝙴𝙳', [
-                'Could not download media',
-                'Try again or re-ask sender to resend'
-            ]),
-            ...channelInfo
-        }, { quoted: message });
-        return false;
-    }
-
-    const target = ownerJid(sock);
-    if (!target) return false;
-
+    const { buffer, mtype, msgObj } = result;
     const DESCRIPTION = settings.description || '𝗣𝗼𝘄𝗲𝗿𝗲𝗱 𝗕𝘆 𝑀𝑼𝑍𝜦𝑀𝜤𝐋-𝑿𝑫';
-    const sender = message.key.participant || message.key.remoteJid;
+    const ctx = vo.getContextInfo(message) || {};
+    const sender = ctx.participant || ctx.remoteJid || message.key.participant || message.key.remoteJid;
     const senderLabel = `@${String(sender).split('@')[0].split(':')[0]}`;
+    const originalCaption = msgObj?.caption || '';
 
-    let caption = vipBox(`👁️ 𝚅𝙸𝙴𝚆 𝙾𝙽𝙲𝙴 ${detected.type.toUpperCase()}`, [
+    let caption = vipBox(`📥 𝚅𝙸𝙴𝚆 𝙾𝙽𝙲𝙴 𝚂𝙰𝚅𝙴𝙳`, [
         `👤 𝚂𝚎𝚗𝚍𝚎𝚛 : ${senderLabel}`,
-        `📁 𝚃𝚢𝚙𝚎 : ${detected.type}`,
+        `📁 𝚃𝚢𝚙𝚎 : ${typeLabel(mtype)}`,
         `📦 𝚂𝚒𝚣𝚎 : ${formatBytes(buffer.length)}`,
-        detected.caption ? `📝 𝙲𝚊𝚙𝚝𝚒𝚘𝚗 : ${detected.caption}` : null
+        originalCaption ? `📝 𝙲𝚊𝚙𝚝𝚒𝚘𝚗 : ${originalCaption}` : null
     ].filter(Boolean));
     caption += `\n\n> *© ${DESCRIPTION}*`;
 
-    let payload;
-    if (detected.type === 'image') {
-        payload = { image: buffer, caption, mimetype: detected.mimetype, mentions: [sender], ...channelInfo };
-    } else if (detected.type === 'video') {
-        payload = { video: buffer, caption, mimetype: detected.mimetype, mentions: [sender], ...channelInfo };
-    } else {
-        payload = { audio: buffer, mimetype: detected.mimetype, ptt: detected.ptt };
-    }
+    // Goes to the bot's own chat, NOT the chat where .vv was typed.
+    const target = vo.selfJid(sock, chatId);
 
-    await sock.sendMessage(target, payload, { quoted: fakevCard });
-    await addReaction(sock, message, '✅');
-    await sock.sendMessage(chatId, {
-        text: vipBox('✅ 𝚂𝙰𝚅𝙴𝙳 𝚃𝙾 𝙳𝙼', [
-            `📁 ${detected.type} sent to your DM`,
-            senderLabel
-        ]),
-        ...channelInfo
-    }, { quoted: message });
+    if (mtype === 'image') {
+        await sock.sendMessage(target, { image: buffer, caption, mentions: [sender], ...channelInfo }, { quoted: fakevCard });
+    } else if (mtype === 'video') {
+        await sock.sendMessage(target, { video: buffer, caption, mimetype: 'video/mp4', mentions: [sender], ...channelInfo }, { quoted: fakevCard });
+    } else {
+        await sock.sendMessage(target, {
+            audio: buffer,
+            mimetype: msgObj?.mimetype || 'audio/ogg; codecs=opus',
+            ptt: mtype === 'ptt' || Boolean(msgObj?.ptt)
+        }, { quoted: fakevCard });
+        await sock.sendMessage(target, { text: caption, mentions: [sender] }, { quoted: fakevCard });
+    }
     return true;
 }
 
@@ -350,8 +264,7 @@ async function vvCommand(sock, chatId, message, match) {
         }
 
         // ── Help (no reply) ──
-        if (!quotedMessageOf(message)) {
-            await addReaction(sock, message, '📋');
+        if (!vo.getContextInfo(message)) {
             return sock.sendMessage(chatId, {
                 text: vipBox('👁️ 𝚅𝙸𝙴𝚆 𝙾𝙽𝙲𝙴 𝙷𝙴𝙻𝙿', [
                     '👑 Owner only command',
@@ -392,17 +305,17 @@ async function vvAutoTrigger(sock, message, triggerText) {
         const normalized = String(triggerText || '').trim().toLowerCase();
         if (!normalized) return false;
         if (!getKeywords().includes(normalized)) return false;
+        if (!vo.getContextInfo(message)) return false; // must be a reply
 
-        // Owner only (Mishu-MD behaviour)
+        // Owner only
         const chatId = message.key.remoteJid;
         const senderId = message.key.participant || message.key.remoteJid;
         if (!message.key.fromMe && !(await isOwnerOrSudo(senderId, sock, chatId))) return false;
 
-        const quotedRaw = quotedMessageOf(message);
-        if (!quotedRaw) return false;
-        if (!detectViewOnce(quotedRaw)) return false;
-
-        return await handleViewOnce(sock, chatId, message);
+        // Core words (vv / wah) explain failures; soft keywords (good, nice,
+        // emojis...) stay silent unless the reply really is a view-once.
+        const quiet = !getCoreTriggers().includes(normalized);
+        return await handleViewOnce(sock, chatId, message, { quiet });
     } catch (error) {
         console.error('VV auto trigger error:', error.message);
         return false;
@@ -410,4 +323,4 @@ async function vvAutoTrigger(sock, message, triggerText) {
 }
 
 module.exports = { vvCommand, vvAutoTrigger, handleViewOnce, getKeywords };
-console.log('👁️ MUZAMIL-XD — View Once (Mishu-MD) system loaded!');
+console.log('👁️ MUZAMIL-XD — View Once (Redx cascade) system loaded!');
