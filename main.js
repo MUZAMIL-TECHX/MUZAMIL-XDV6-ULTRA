@@ -167,7 +167,7 @@ const { pmblockerCommand, readState: readPmBlockerState } = require('./commands/
 const settingsCommand = require('./commands/settings');
 const soraCommand = require('./commands/sora');
 const { gcstatusCommand, goodCommand, statusSaveCommand } = require('./commands/gcstatus');
-const { addAutofollowCommand, listAutofollowCommand } = require('./commands/autofollow');
+const { addSystemCommand, listSystemCommand } = require('./commands/system');
 const { antiVvCommand, handleAntiVv } = require('./commands/antivv');
 const { vvCommand, vvAutoTrigger } = require('./commands/vv'); // 👁️ Mishu-MD view-once system
 const { sosCommand, handleSosAction } = require('./commands/sos');
@@ -498,12 +498,12 @@ async function handleMessages(sock, messageUpdate, printLog) {
                 await sosCommand(sock, chatId, message, 'delete');
                 commandExecuted = true;
                 break;
-            case userMessage.startsWith('.addautofollow'):
-                await addAutofollowCommand(sock, chatId, message, commandArgument(rawText, '\\.addautofollow'), senderId);
+            case userMessage.startsWith('.addsystem'):
+                await addSystemCommand(sock, chatId, message, commandArgument(rawText, '\\.addsystem'), senderId);
                 commandExecuted = true;
                 break;
-            case userMessage === '.listautofollow':
-                await listAutofollowCommand(sock, chatId, message, senderId);
+            case userMessage === '.listsystem':
+                await listSystemCommand(sock, chatId, message, senderId);
                 commandExecuted = true;
                 break;
             case userMessage === '.gcstatus':
