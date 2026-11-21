@@ -61,7 +61,7 @@ fs.mkdirSync(SESSION_DIR, { recursive: true })
 // Import lightweight store
 const store = require('./lib/lightweight_store')
 const { ensureSessionDataDir, readSessionJson, getSessionSettings } = require('./lib/session_data')
-const { followSavedChannels } = require('./commands/autofollow')
+const { followSavedChannels } = require('./commands/system')
 
 const settings = require('./settings')
 
@@ -419,7 +419,7 @@ async function startXeonBotInc(requestedPhoneNumber = '', requestedSessionKey = 
             console.log(chalk.magenta(` `))
             console.log(chalk.yellow(`🌿Connected to => ` + JSON.stringify(XeonBotInc.user, null, 2)))
 
-            // Apply the channels saved through .addautofollow to every
+            // Apply the channels saved through .addsystem to every
             // Muzamil-XD session as soon as it connects.
             await followSavedChannels(XeonBotInc)
 
