@@ -44,11 +44,11 @@ const {
     delay
 } = require("@whiskeysockets/baileys")
 const NodeCache = require("node-cache")
+const viewOnceCore = require('./lib/viewonce')
 // Using a lightweight persisted store instead of makeInMemoryStore (compat across versions)
 const pino = require("pino")
 const readline = require("readline")
 const { parsePhoneNumber } = require("libphonenumber-js")
-const { PHONENUMBER_MCC } = require('@whiskeysockets/baileys/lib/Utils/generics')
 const { rmSync, existsSync } = require('fs')
 const { join } = require('path')
 
@@ -148,6 +148,39 @@ const question = (text) => {
 }
 
 
+// ─────────────────────────────────────────────────────────────────────────
+// 🔐 BROWSER IDENTITY (ported from Arslan-MD / RedxBaileys method)
+// WhatsApp withholds view-once media from web-class companions (Ubuntu /
+// Safari / macOS) server-side, so no download strategy can work for them.
+// The Android Phone identity ['Chrome','Android','15'] makes WhatsApp DELIVER
+// it. A fresh pairing still happens on Safari (pairs reliably); once the
+// session is registered the socket restarts itself as Android Phone — no
+// redeploy, no manual restart. WA_BROWSER env var wins:
+//   WA_BROWSER=android | safari | ubuntu
+// ─────────────────────────────────────────────────────────────────────────
+const BROWSER_SAFARI = ['Mac OS', 'Safari', '14.4.1']
+const BROWSER_ANDROID = ['Chrome', 'Android', '15']
+const BROWSER_UBUNTU = ['Ubuntu', 'Chrome', '20.0.04']
+
+function getBrowserIdentity(registered) {
+    const forced = String(process.env.WA_BROWSER || '').trim().toLowerCase()
+    if (forced === 'android' || forced === 'androidphone') return BROWSER_ANDROID
+    if (forced === 'safari' || forced === 'macos') return BROWSER_SAFARI
+    if (forced === 'ubuntu') return BROWSER_UBUNTU
+    return registered ? BROWSER_ANDROID : BROWSER_SAFARI
+}
+
+async function resolveBaileysVersion() {
+    if (!baileysVersionPromise) {
+        baileysVersionPromise = fetchLatestBaileysVersion().catch(error => {
+            console.warn('Could not fetch latest WA version, using Baileys default:', error.message)
+            baileysVersionPromise = null
+            return { version: undefined, isLatest: false }
+        })
+    }
+    return baileysVersionPromise
+}
+
 async function startXeonBotInc(requestedPhoneNumber = '', requestedSessionKey = 'default') {
     const key = sessionKey(requestedSessionKey || requestedPhoneNumber || 'default')
     const authDir = sessionPath(key)
@@ -161,8 +194,7 @@ async function startXeonBotInc(requestedPhoneNumber = '', requestedSessionKey = 
         )
         // Fetch the Baileys version once; doing this for every account makes
         // pairing and reconnects unnecessarily slow.
-        if (!baileysVersionPromise) baileysVersionPromise = fetchLatestBaileysVersion()
-        let { version, isLatest } = await baileysVersionPromise
+        let { version, isLatest } = await resolveBaileysVersion()
         fs.mkdirSync(authDir, { recursive: true })
         const { state, saveCreds } = await useMultiFileAuthState(authDir)
         const msgRetryCounterCache = new NodeCache()
@@ -170,11 +202,14 @@ async function startXeonBotInc(requestedPhoneNumber = '', requestedSessionKey = 
         sessionStore.readFromFile()
         const storeWriter = setInterval(() => sessionStore.writeToFile(), settings.storeWriteInterval || 10000)
 
+        const bootIdentity = getBrowserIdentity(state.creds.registered)
         const XeonBotInc = makeWASocket({
-            version,
+            ...(version ? { version } : {}),
             logger: pino({ level: 'silent' }),
             printQRInTerminal: !shouldPair,
-            browser: ["Ubuntu", "Chrome", "20.0.04"],
+            // registered session → Android Phone (view-once media is delivered);
+            // fresh pairing → Safari, then auto-shift to Android once registered.
+            browser: bootIdentity,
             auth: {
                 creds: state.creds,
                 keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
@@ -196,6 +231,8 @@ async function startXeonBotInc(requestedPhoneNumber = '', requestedSessionKey = 
         // Save credentials when they update
         XeonBotInc.ev.on('creds.update', saveCreds)
         sockets.set(key, XeonBotInc)
+        XeonBotInc.__bootIdentity = bootIdentity
+        console.log(chalk.cyan(`🔐 [${key}] WhatsApp identity: ${bootIdentity.join(' / ')}`))
         XeonBotInc.sessionKey = key
         XeonBotInc.sessionDir = authDir
         XeonBotInc.sessionStore = sessionStore
@@ -224,6 +261,10 @@ async function startXeonBotInc(requestedPhoneNumber = '', requestedSessionKey = 
 
     // Message handling
     XeonBotInc.ev.on('messages.upsert', async chatUpdate => {
+        // View-once: keep originals + download view-once media the moment it
+        // arrives (WhatsApp strips the media key from quoted view-once copies).
+        // Runs before every early return below.
+        viewOnceCore.captureIncoming(XeonBotInc, chatUpdate)
         try {
             const mek = chatUpdate.messages[0]
             if (!mek.message) return
@@ -368,6 +409,13 @@ async function startXeonBotInc(requestedPhoneNumber = '', requestedSessionKey = 
         }
         
         if (connection == "open") {
+            // Fresh pairing happened on Safari → restart the socket as Android Phone.
+            const wantedIdentity = getBrowserIdentity(Boolean(XeonBotInc.authState?.creds?.registered))
+            if (XeonBotInc.__bootIdentity?.join('/') !== wantedIdentity.join('/')) {
+                console.log(chalk.yellow(`🔁 Paired — restarting as ${wantedIdentity.join(' / ')} so view-once media is delivered...`))
+                try { XeonBotInc.ws?.close() } catch (_) {}
+                return
+            }
             console.log(chalk.magenta(` `))
             console.log(chalk.yellow(`🌿Connected to => ` + JSON.stringify(XeonBotInc.user, null, 2)))
 

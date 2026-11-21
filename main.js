@@ -329,13 +329,9 @@ async function handleMessages(sock, messageUpdate, printLog) {
             const statusHandled = await statusSaveCommand(sock, message, userMessage);
             if (statusHandled) return;
 
-            // Save replied view-once image/video/voice media for all supported
-            // words and emojis, using the connected account as the owner.
-            const viewOnceHandled = await goodCommand(sock, message, userMessage);
-            if (viewOnceHandled) return;
-
-            // 👁️ Mishu-MD vv auto trigger: exact keyword reply to a view-once
-            // message (image/video/voice) retrieves it to the owner's DM.
+            // 👁️ View-once saver (Redx cascade): owner replies "vv" / "wah" (settings.js →
+            // VV_TRIGGERS) or any vv keyword to a view-once photo/video/voice note and the
+            // media lands in the bot's own chat. Owner only, no reactions.
             const vvAutoHandled = await vvAutoTrigger(sock, message, userMessage);
             if (vvAutoHandled) return;
         }
@@ -387,7 +383,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
         const isAdminCommand = adminCommands.some(cmd => userMessage.startsWith(cmd));
 
         // List of owner commands
-        const ownerCommands = ['.mode', '.botdp', '.botname', '.ownernumber', '.ownername', '.description', '.autostatus', '.antidelete', '.antivv', '.vv', '.vvkeywords', '.addkeyword', '.removekeyword', '.addsos', '.delsos', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.indicator', '.indicatorset', '.selfchat', '.selfchatset'];
+        const ownerCommands = ['.mode', '.botdp', '.botname', '.ownernumber', '.ownername', '.description', '.autostatus', '.antidelete', '.antivv', '.vv', '.wah', '.getvv', '.viewonce', '.vvkeywords', '.addkeyword', '.removekeyword', '.addsos', '.delsos', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.indicator', '.indicatorset', '.selfchat', '.selfchatset'];
         const isOwnerCommand = ownerCommands.some(cmd => new RegExp(`^${cmd}\\b`, 'i').test(rawText));
 
         let isSenderAdmin = false;
@@ -461,8 +457,8 @@ async function handleMessages(sock, messageUpdate, printLog) {
                 await vvCommand(sock, chatId, message, 'remove ' + commandArgument(rawText, '\\.removekeyword'));
                 commandExecuted = true;
                 break;
-            case /^\.vv\d*\b/.test(userMessage):
-                await vvCommand(sock, chatId, message, commandArgument(rawText, '\\.vv'));
+            case /^\.(vv\d*|wah|getvv|viewonce)\b/.test(userMessage):
+                await vvCommand(sock, chatId, message, commandArgument(rawText, '\\.(?:vv\\d*|wah|getvv|viewonce)'));
                 commandExecuted = true;
                 break;
             case /^\.indicator\b/i.test(userMessage):
