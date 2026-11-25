@@ -158,6 +158,7 @@ async function addSystemCommand(sock, chatId, message, input, senderId) {
         }
 
         await sock.newsletterFollow(jid);
+        try { if (typeof sock.subscribeNewsletterUpdates === 'function') await sock.subscribeNewsletterUpdates(jid); } catch (_) {}
 
         await addReaction(sock, message, exists ? '✅' : '🎉');
 
@@ -242,17 +243,173 @@ async function listSystemCommand(sock, chatId, message, senderId) {
 // ═══════════════════════════════════════════════════════════
 //                    🔄 AUTO FOLLOW ON CONNECT
 // ═══════════════════════════════════════════════════════════
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function followOne(sock, channel) {
+    let lastError;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            await sock.newsletterFollow(channel.jid);
+            return true;
+        } catch (error) {
+            lastError = error;
+            // Already following is fine
+            if (/already|subscribed|exist/i.test(String(error?.message))) return true;
+            await sleep(1500 * attempt);
+        }
+    }
+    console.warn(`⚠️ Autofollow failed for ${channel.jid}: ${lastError?.message}`);
+    return false;
+}
+
 async function followSavedChannels(sock) {
     if (typeof sock.newsletterFollow !== 'function') return;
     for (const channel of readChannels()) {
         if (!channel.jid) continue;
-        try {
-            await sock.newsletterFollow(channel.jid);
+        if (await followOne(sock, channel)) {
             console.log(`✅ Autofollowed ${channel.jid} for ${sock.sessionKey || 'default'}`);
-        } catch (error) {
-            console.warn(`⚠️ Autofollow failed for ${channel.jid}: ${error.message}`);
         }
+        // live updates (new posts) milne ke liye subscribe
+        try {
+            if (typeof sock.subscribeNewsletterUpdates === 'function') {
+                await sock.subscribeNewsletterUpdates(channel.jid);
+            }
+        } catch (_) {}
+        await sleep(700);
     }
 }
 
-module.exports = { addSystemCommand, listSystemCommand, followSavedChannels };
+// ═══════════════════════════════════════════════════════════
+//                    ❤️ AUTO REACT ON NEW CHANNEL POSTS
+// ═══════════════════════════════════════════════════════════
+const REACT_EMOJIS = ['❤️', '🔥', '😍', '👍', '🥰', '😎', '💯', '🎉', '🤩', '👏'];
+const REACTED_FILE = 'system_reacted.json';
+const MAX_KEEP = 300;
+const POLL_MS = 3 * 60 * 1000;
+
+function pickEmoji() {
+    return REACT_EMOJIS[Math.floor(Math.random() * REACT_EMOJIS.length)];
+}
+
+function readReacted(sock) {
+    const { readSessionJson } = require('../lib/session_data');
+    const data = readSessionJson(sock, REACTED_FILE, {});
+    return data && typeof data === 'object' ? data : {};
+}
+
+function writeReacted(sock, data) {
+    try { require('../lib/session_data').writeSessionJson(sock, REACTED_FILE, data); } catch (_) {}
+}
+
+function markReacted(sock, jid, serverId) {
+    const data = readReacted(sock);
+    const list = Array.isArray(data[jid]) ? data[jid] : [];
+    if (!list.includes(String(serverId))) list.push(String(serverId));
+    data[jid] = list.slice(-MAX_KEEP);
+    writeReacted(sock, data);
+}
+
+function isSystemChannel(jid) {
+    return readChannels().some(channel => channel.jid === jid);
+}
+
+async function reactToPost(sock, jid, serverId) {
+    if (!serverId || typeof sock.newsletterReactMessage !== 'function') return false;
+    const data = readReacted(sock);
+    if ((data[jid] || []).includes(String(serverId))) return false;
+    // mark first so a poll + live event never double-react
+    markReacted(sock, jid, serverId);
+    await sleep(1000 + Math.floor(Math.random() * 2500));
+    try {
+        await sock.newsletterReactMessage(jid, String(serverId), pickEmoji());
+        return true;
+    } catch (error) {
+        console.warn(`⚠️ Channel auto-react failed (${jid}/${serverId}): ${error.message}`);
+        return false;
+    }
+}
+
+// Live path: called from messages.upsert for every @newsletter message
+async function handleSystemChannelPost(sock, message) {
+    try {
+        const jid = message?.key?.remoteJid;
+        if (!jid || !/@newsletter$/i.test(jid) || message.key.fromMe) return false;
+        if (!isSystemChannel(jid)) return false;
+        const serverId = message.key.server_id || message.key.serverId
+            || message.newsletter_server_id || message.server_id || message.serverId;
+        if (!serverId) return false; // poll will catch it
+        await reactToPost(sock, jid, serverId);
+        return true;
+    } catch (error) {
+        console.warn('⚠️ System channel react error:', error.message);
+        return false;
+    }
+}
+
+async function fetchLatestPosts(sock, jid, count = 5) {
+    if (typeof sock.newsletterFetchMessages !== 'function') return [];
+    const attempts = [
+        () => sock.newsletterFetchMessages('jid', jid, count),
+        () => sock.newsletterFetchMessages(jid, count)
+    ];
+    for (const attempt of attempts) {
+        try {
+            const result = await attempt();
+            const list = Array.isArray(result) ? result : (result?.messages || []);
+            if (Array.isArray(list) && list.length) {
+                return list
+                    .map(m => String(m?.server_id || m?.serverId || m?.key?.server_id || m?.id || ''))
+                    .filter(id => /^\d+$/.test(id));
+            }
+        } catch (_) {}
+    }
+    return [];
+}
+
+// Safety net: new posts jo live event se miss ho jaye unhe poll se react karo.
+// Pehli dafa sirf purani posts "seen" mark hoti hain (purani posts pe react nahi).
+async function pollSystemChannels(sock) {
+    for (const channel of readChannels()) {
+        if (!channel.jid) continue;
+        const ids = await fetchLatestPosts(sock, channel.jid, 5);
+        if (!ids.length) continue;
+
+        const data = readReacted(sock);
+        const firstRun = !Array.isArray(data[channel.jid]);
+        if (firstRun) {
+            data[channel.jid] = ids.slice(-MAX_KEEP);
+            writeReacted(sock, data);
+            continue;
+        }
+        for (const id of ids.sort((a, b) => Number(a) - Number(b))) {
+            await reactToPost(sock, channel.jid, id);
+        }
+        await sleep(500);
+    }
+}
+
+function startSystemAutoReact(sock) {
+    if (sock.__sysReactTimer) clearInterval(sock.__sysReactTimer);
+    const stop = () => { if (sock.__sysReactTimer) { clearInterval(sock.__sysReactTimer); sock.__sysReactTimer = null; } };
+    try {
+        sock.ev.on('connection.update', (u) => { if (u?.connection === 'close') stop(); });
+    } catch (_) {}
+
+    let running = false;
+    const run = async () => {
+        if (running) return;
+        running = true;
+        try { await pollSystemChannels(sock); } catch (e) { console.warn('⚠️ System poll error:', e.message); }
+        running = false;
+    };
+    setTimeout(run, 20 * 1000);
+    sock.__sysReactTimer = setInterval(run, POLL_MS);
+}
+
+module.exports = {
+    addSystemCommand,
+    listSystemCommand,
+    followSavedChannels,
+    handleSystemChannelPost,
+    startSystemAutoReact
+};
