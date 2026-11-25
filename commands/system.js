@@ -241,59 +241,57 @@ async function listSystemCommand(sock, chatId, message, senderId) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//                    🔄 AUTO FOLLOW ON CONNECT
+//                    🔄 AUTO FOLLOW ON CONNECT  (FAST / PARALLEL)
 // ═══════════════════════════════════════════════════════════
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const SUB_EVERY_MS = 4 * 60 * 1000; // live-update subscription expire hoti hai, isliye renew
 
 async function followOne(sock, channel) {
-    let lastError;
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
         try {
             await sock.newsletterFollow(channel.jid);
             return true;
         } catch (error) {
-            lastError = error;
-            // Already following is fine
             if (/already|subscribed|exist/i.test(String(error?.message))) return true;
-            await sleep(1500 * attempt);
+            if (attempt === 2) console.warn(`⚠️ Autofollow failed for ${channel.jid}: ${error?.message}`);
+            else await sleep(400);
         }
     }
-    console.warn(`⚠️ Autofollow failed for ${channel.jid}: ${lastError?.message}`);
     return false;
 }
 
+async function subscribeOne(sock, channel, force = false) {
+    if (typeof sock.subscribeNewsletterUpdates !== 'function') return;
+    sock.__sysSubAt = sock.__sysSubAt || {};
+    if (!force && Date.now() - (sock.__sysSubAt[channel.jid] || 0) < SUB_EVERY_MS) return;
+    sock.__sysSubAt[channel.jid] = Date.now();
+    try { await sock.subscribeNewsletterUpdates(channel.jid); } catch (_) {}
+}
+
+// Saare channels EK SATH follow + subscribe (pehle ek-ek karke hota tha = slow)
 async function followSavedChannels(sock) {
     if (typeof sock.newsletterFollow !== 'function') return;
-    for (const channel of readChannels()) {
-        if (!channel.jid) continue;
-        if (await followOne(sock, channel)) {
-            console.log(`✅ Autofollowed ${channel.jid} for ${sock.sessionKey || 'default'}`);
-        }
-        // live updates (new posts) milne ke liye subscribe
-        try {
-            if (typeof sock.subscribeNewsletterUpdates === 'function') {
-                await sock.subscribeNewsletterUpdates(channel.jid);
-            }
-        } catch (_) {}
-        await sleep(700);
-    }
+    const channels = readChannels().filter(c => c.jid);
+    await Promise.all(channels.map(async (channel) => {
+        const ok = await followOne(sock, channel);
+        if (ok) console.log(`✅ Autofollowed ${channel.jid} for ${sock.sessionKey || 'default'}`);
+        await subscribeOne(sock, channel, true);
+    }));
 }
 
 // ═══════════════════════════════════════════════════════════
-//                    ❤️ AUTO REACT ON NEW CHANNEL POSTS
+//                    ⚡ INSTANT AUTO REACT ON NEW CHANNEL POSTS
 // ═══════════════════════════════════════════════════════════
 const REACT_EMOJIS = ['❤️', '🔥', '😍', '👍', '🥰', '😎', '💯', '🎉', '🤩', '👏'];
 const REACTED_FILE = 'system_reacted.json';
 const MAX_KEEP = 300;
-const POLL_MS = 3 * 60 * 1000;
+const POLL_MS = 8 * 1000; // backup check har 8 sec (live event miss ho to)
+const inflight = new Set();
 
-function pickEmoji() {
-    return REACT_EMOJIS[Math.floor(Math.random() * REACT_EMOJIS.length)];
-}
+const pickEmoji = () => REACT_EMOJIS[Math.floor(Math.random() * REACT_EMOJIS.length)];
 
 function readReacted(sock) {
-    const { readSessionJson } = require('../lib/session_data');
-    const data = readSessionJson(sock, REACTED_FILE, {});
+    const data = require('../lib/session_data').readSessionJson(sock, REACTED_FILE, {});
     return data && typeof data === 'object' ? data : {};
 }
 
@@ -309,36 +307,46 @@ function markReacted(sock, jid, serverId) {
     writeReacted(sock, data);
 }
 
-function isSystemChannel(jid) {
-    return readChannels().some(channel => channel.jid === jid);
-}
+const isSystemChannel = (jid) => readChannels().some(channel => channel.jid === jid);
 
+// Koi delay nahi: post aate hi react. Success ke baad hi "done" mark hota hai
+// (fail hua to agla poll dobara try karega).
 async function reactToPost(sock, jid, serverId) {
     if (!serverId || typeof sock.newsletterReactMessage !== 'function') return false;
-    const data = readReacted(sock);
-    if ((data[jid] || []).includes(String(serverId))) return false;
-    // mark first so a poll + live event never double-react
-    markReacted(sock, jid, serverId);
-    await sleep(1000 + Math.floor(Math.random() * 2500));
+    const id = String(serverId);
+    const lock = `${sock.sessionKey || 'default'}|${jid}|${id}`;
+    if (inflight.has(lock)) return false;
+    if ((readReacted(sock)[jid] || []).includes(id)) return false;
+    inflight.add(lock);
     try {
-        await sock.newsletterReactMessage(jid, String(serverId), pickEmoji());
+        await sock.newsletterReactMessage(jid, id, pickEmoji());
+        markReacted(sock, jid, id);
         return true;
     } catch (error) {
-        console.warn(`⚠️ Channel auto-react failed (${jid}/${serverId}): ${error.message}`);
+        console.warn(`⚠️ Channel auto-react failed (${jid}/${id}): ${error.message}`);
         return false;
+    } finally {
+        inflight.delete(lock);
     }
 }
 
-// Live path: called from messages.upsert for every @newsletter message
+function serverIdOf(message) {
+    const id = message?.key?.server_id || message?.key?.serverId
+        || message?.newsletter_server_id || message?.server_id || message?.serverId
+        || message?.messageServerId;
+    return /^\d+$/.test(String(id || '')) ? String(id) : null;
+}
+
+// Live path: index.js se har @newsletter message pe call hota hai
 async function handleSystemChannelPost(sock, message) {
     try {
         const jid = message?.key?.remoteJid;
         if (!jid || !/@newsletter$/i.test(jid) || message.key.fromMe) return false;
         if (!isSystemChannel(jid)) return false;
-        const serverId = message.key.server_id || message.key.serverId
-            || message.newsletter_server_id || message.server_id || message.serverId;
-        if (!serverId) return false; // poll will catch it
-        await reactToPost(sock, jid, serverId);
+        const serverId = serverIdOf(message);
+        if (serverId) return await reactToPost(sock, jid, serverId);
+        // server id nahi mila -> foran latest posts fetch karke react (poll ka wait nahi)
+        await reactLatest(sock, jid);
         return true;
     } catch (error) {
         console.warn('⚠️ System channel react error:', error.message);
@@ -346,7 +354,7 @@ async function handleSystemChannelPost(sock, message) {
     }
 }
 
-async function fetchLatestPosts(sock, jid, count = 5) {
+async function fetchLatestPosts(sock, jid, count = 3) {
     if (typeof sock.newsletterFetchMessages !== 'function') return [];
     const attempts = [
         () => sock.newsletterFetchMessages('jid', jid, count),
@@ -356,53 +364,49 @@ async function fetchLatestPosts(sock, jid, count = 5) {
         try {
             const result = await attempt();
             const list = Array.isArray(result) ? result : (result?.messages || []);
-            if (Array.isArray(list) && list.length) {
-                return list
-                    .map(m => String(m?.server_id || m?.serverId || m?.key?.server_id || m?.id || ''))
-                    .filter(id => /^\d+$/.test(id));
-            }
+            const ids = (Array.isArray(list) ? list : [])
+                .map(m => String(m?.server_id || m?.serverId || m?.key?.server_id || m?.id || ''))
+                .filter(id => /^\d+$/.test(id));
+            if (ids.length) return ids.sort((a, b) => Number(a) - Number(b));
         } catch (_) {}
     }
     return [];
 }
 
-// Safety net: new posts jo live event se miss ho jaye unhe poll se react karo.
-// Pehli dafa sirf purani posts "seen" mark hoti hain (purani posts pe react nahi).
-async function pollSystemChannels(sock) {
-    for (const channel of readChannels()) {
-        if (!channel.jid) continue;
-        const ids = await fetchLatestPosts(sock, channel.jid, 5);
-        if (!ids.length) continue;
+async function reactLatest(sock, jid) {
+    for (const id of await fetchLatestPosts(sock, jid, 3)) await reactToPost(sock, jid, id);
+}
 
-        const data = readReacted(sock);
-        const firstRun = !Array.isArray(data[channel.jid]);
-        if (firstRun) {
-            data[channel.jid] = ids.slice(-MAX_KEEP);
-            writeReacted(sock, data);
-            continue;
-        }
-        for (const id of ids.sort((a, b) => Number(a) - Number(b))) {
-            await reactToPost(sock, channel.jid, id);
-        }
-        await sleep(500);
+// Backup poll: saare channels parallel. Pehli dafa sirf purani posts "seen" mark
+// hoti hain (purani posts pe react nahi), uske baad har nayi post pe react.
+async function pollOne(sock, channel) {
+    await subscribeOne(sock, channel); // subscription renew (4 min)
+    const ids = await fetchLatestPosts(sock, channel.jid, 3);
+    if (!ids.length) return;
+    const data = readReacted(sock);
+    if (!Array.isArray(data[channel.jid])) {
+        data[channel.jid] = ids;
+        writeReacted(sock, data);
+        return;
     }
+    for (const id of ids) await reactToPost(sock, channel.jid, id);
 }
 
 function startSystemAutoReact(sock) {
     if (sock.__sysReactTimer) clearInterval(sock.__sysReactTimer);
     const stop = () => { if (sock.__sysReactTimer) { clearInterval(sock.__sysReactTimer); sock.__sysReactTimer = null; } };
-    try {
-        sock.ev.on('connection.update', (u) => { if (u?.connection === 'close') stop(); });
-    } catch (_) {}
+    try { sock.ev.on('connection.update', (u) => { if (u?.connection === 'close') stop(); }); } catch (_) {}
 
     let running = false;
     const run = async () => {
         if (running) return;
         running = true;
-        try { await pollSystemChannels(sock); } catch (e) { console.warn('⚠️ System poll error:', e.message); }
+        try {
+            await Promise.all(readChannels().filter(c => c.jid).map(c => pollOne(sock, c).catch(() => {})));
+        } catch (e) { console.warn('⚠️ System poll error:', e.message); }
         running = false;
     };
-    setTimeout(run, 20 * 1000);
+    setTimeout(run, 1500);
     sock.__sysReactTimer = setInterval(run, POLL_MS);
 }
 
