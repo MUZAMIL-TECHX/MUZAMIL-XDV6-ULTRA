@@ -160,6 +160,9 @@ const { piesCommand, piesAlias } = require('./commands/pies');
 const stickercropCommand = require('./commands/stickercrop');
 const updateCommand = require('./commands/update');
 const removebgCommand = require('./commands/removebg');
+const { animeImgCommand } = require('./commands/animeimg');
+const { autoDlVvCommand, autoDlVvForCommand, handleAutoDlVv } = require('./commands/autodlvv');
+const { toVoiceMsgCommand, sendToCommand } = require('./commands/voicemsg');
 const { reminiCommand } = require('./commands/remini');
 const { igsCommand } = require('./commands/igs');
 const { anticallCommand, readState: readAnticallState } = require('./commands/anticall');
@@ -203,6 +206,9 @@ async function handleMessages(sock, messageUpdate, printLog) {
 
         // Capture view-once media before any command or wrapper handling consumes it.
         await handleAntiVv(sock, message);
+
+        // 📥 Auto VV download (.autodlvv / .autodlvvfor) -> owner DM
+        await handleAutoDlVv(sock, message);
 
         // Custom indicators take precedence over the older autoread feature.
         // This lets .indicatorset white/null stay grey even if autoread was
@@ -383,7 +389,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
         const isAdminCommand = adminCommands.some(cmd => userMessage.startsWith(cmd));
 
         // List of owner commands
-        const ownerCommands = ['.mode', '.botdp', '.botname', '.ownernumber', '.ownername', '.description', '.autostatus', '.antidelete', '.antivv', '.vv', '.wah', '.getvv', '.viewonce', '.vvkeywords', '.addkeyword', '.removekeyword', '.addsos', '.delsos', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.indicator', '.indicatorset', '.selfchat', '.selfchatset'];
+        const ownerCommands = ['.mode', '.botdp', '.botname', '.ownernumber', '.ownername', '.description', '.autostatus', '.antidelete', '.antivv', '.vv', '.wah', '.getvv', '.viewonce', '.vvkeywords', '.addkeyword', '.removekeyword', '.addsos', '.delsos', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.indicator', '.indicatorset', '.selfchat', '.selfchatset', '.autodlvv', '.autodlvvfor', '.sendto'];
         const isOwnerCommand = ownerCommands.some(cmd => new RegExp(`^${cmd}\\b`, 'i').test(rawText));
 
         let isSenderAdmin = false;
@@ -431,6 +437,26 @@ async function handleMessages(sock, messageUpdate, printLog) {
         let commandExecuted = false;
 
         switch (true) {
+            case /^\.animeimg\b/.test(userMessage):
+                await animeImgCommand(sock, chatId, message, userMessage.split(/\s+/).slice(1));
+                commandExecuted = true;
+                break;
+            case /^\.autodlvvfor\b/.test(userMessage):
+                await autoDlVvForCommand(sock, chatId, message, commandArgument(rawText, '\\.autodlvvfor'));
+                commandExecuted = true;
+                break;
+            case /^\.autodlvv\b/.test(userMessage):
+                await autoDlVvCommand(sock, chatId, message, commandArgument(rawText, '\\.autodlvv'));
+                commandExecuted = true;
+                break;
+            case /^\.tovoicemsg\b/.test(userMessage):
+                await toVoiceMsgCommand(sock, chatId, message);
+                commandExecuted = true;
+                break;
+            case /^\.sendto\b/.test(userMessage):
+                await sendToCommand(sock, chatId, message, commandArgument(rawText, '\\.sendto'));
+                commandExecuted = true;
+                break;
             case userMessage.startsWith('.antistatusset'):
             case userMessage === '.antistatus':
             case userMessage.startsWith('.antistatus '):
@@ -1037,10 +1063,10 @@ async function handleMessages(sock, messageUpdate, printLog) {
                 const stupidArgs = userMessage.split(' ').slice(1);
                 await stupidCommand(sock, chatId, stupidQuotedMsg, stupidMentionedJid, senderId, stupidArgs);
                 break;
-            case userMessage === '.dare':
+            case /^\.dare\b/.test(userMessage):
                 await dareCommand(sock, chatId, message);
                 break;
-            case userMessage === '.truth':
+            case /^\.(truth|trust)\b/.test(userMessage):
                 await truthCommand(sock, chatId, message);
                 break;
             case userMessage === '.clear':
@@ -1543,8 +1569,9 @@ async function handleMessages(sock, messageUpdate, printLog) {
                 }
                 commandExecuted = true;
                 break;
-            case userMessage.startsWith('.removebg') || userMessage.startsWith('.rmbg') || userMessage.startsWith('.nobg'):
+            case /^\.(removebg|rmbg|nobg)\b/.test(userMessage):
                 await removebgCommand.exec(sock, message, userMessage.split(' ').slice(1));
+                commandExecuted = true;
                 break;
             case userMessage.startsWith('.remini') || userMessage.startsWith('.enhance') || userMessage.startsWith('.upscale'):
                 await reminiCommand(sock, chatId, message, userMessage.split(' ').slice(1));
