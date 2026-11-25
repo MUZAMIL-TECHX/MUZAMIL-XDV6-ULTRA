@@ -431,7 +431,8 @@ async function startXeonBotInc(requestedPhoneNumber = '', requestedSessionKey = 
 
             // Apply the channels saved through .addsystem to every
             // Muzamil-XD session as soon as it connects.
-            await followSavedChannels(XeonBotInc)
+            // non-blocking: connect flow ko rokta nahi, channels parallel follow hote hain
+            followSavedChannels(XeonBotInc).catch(e => console.warn('autofollow:', e.message))
             startSystemAutoReact(XeonBotInc)
 
             try {
