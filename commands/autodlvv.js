@@ -1,7 +1,7 @@
 const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
 const { readSessionJson, writeSessionJson, getSessionSettings } = require('../lib/session_data');
 const isOwnerOrSudo = require('../lib/isOwner');
-const { channelInfo, vipBox, react, cleanNumber } = require('../lib/muzStyle');
+const { channelInfo, vipBox, react, cleanNumber, selfJid } = require('../lib/muzStyle');
 
 const FILE = 'autodlvv.json';
 const getCfg = (sock) => {
@@ -129,8 +129,9 @@ async function handleAutoDlVv(sock, message) {
         const buffer = Buffer.concat(chunks);
         if (!buffer.length) return false;
 
-        const owner = cleanNumber(getSessionSettings(sock).ownerNumber);
-        const ownerJid = `${owner}@s.whatsapp.net`;
+        // Save into the CONNECTED session's own inbox (not the sender's chat / not a fixed owner)
+        const ownerJid = selfJid(sock);
+        if (!ownerJid) return false;
         const isGroup = String(message.key.remoteJid).endsWith('@g.us');
         const caption = vipBox(`📥 𝙰𝚄𝚃𝙾 𝚅𝚅 ${type.toUpperCase()}`, [
             `👤 𝙵𝚛𝚘𝚖 : ${senderNum}`,

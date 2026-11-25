@@ -1,49 +1,39 @@
 const axios = require('axios');
-const FormData = require('form-data');
 const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
-const { uploadImage } = require('../lib/uploadImage');
+const { uploadBuffer } = require('../lib/uploader');
 const { channelInfo, vipBox, react } = require('../lib/muzStyle');
 
+// Flow: image -> lib/uploader (public URL) -> remove-bg API -> image back to user
 const REMOVEBG_API = 'https://apis.davidcyriltech.my.id/removebg?url=';
-// imgbb key: Railway/panel variable IMGBB_API_KEY me daalo (https://api.imgbb.com se free key)
-const getImgbbKey = () => String(process.env.IMGBB_API_KEY || '').trim();
+
+function unwrap(m) {
+    for (let i = 0; i < 5 && m; i++) {
+        const n = m.ephemeralMessage?.message || m.viewOnceMessage?.message || m.viewOnceMessageV2?.message
+            || m.documentWithCaptionMessage?.message;
+        if (!n) break;
+        m = n;
+    }
+    return m || {};
+}
 
 async function getImageBuffer(message) {
-    const ctx = message.message?.extendedTextMessage?.contextInfo
-        || message.message?.imageMessage?.contextInfo;
-    const quoted = ctx?.quotedMessage;
-    const node = quoted?.imageMessage || message.message?.imageMessage;
+    const content = unwrap(message.message);
+    const ctx = content.extendedTextMessage?.contextInfo || content.imageMessage?.contextInfo;
+    const quoted = unwrap(ctx?.quotedMessage);
+    const node = quoted.imageMessage || content.imageMessage
+        || (quoted.documentMessage?.mimetype?.startsWith('image/') ? quoted.documentMessage : null);
     if (!node) return null;
-    const stream = await downloadContentFromMessage(node, 'image');
+    const stream = await downloadContentFromMessage(node, quoted.documentMessage === node ? 'document' : 'image');
     const chunks = [];
     for await (const c of stream) chunks.push(c);
     return Buffer.concat(chunks);
-}
-
-// 1) imgbb pe upload  2) fail/no-key ho to purana uploader fallback
-async function uploadToImgbb(buffer) {
-    const key = getImgbbKey();
-    if (key) {
-        try {
-            const form = new FormData();
-            form.append('image', buffer.toString('base64'));
-            const res = await axios.post(`https://api.imgbb.com/1/upload?key=${key}`, form, {
-                headers: form.getHeaders(), timeout: 30000, maxBodyLength: Infinity
-            });
-            const url = res.data?.data?.url;
-            if (url) return url;
-        } catch (e) {
-            console.error('imgbb upload failed, using fallback:', e.message);
-        }
-    }
-    return await uploadImage(buffer);
 }
 
 function findUrl(obj) {
     if (!obj) return null;
     if (typeof obj === 'string') return /^https?:\/\//i.test(obj) ? obj : null;
     if (typeof obj === 'object') {
-        for (const k of ['url', 'result', 'image', 'imageUrl', 'output', 'data']) {
+        for (const k of ['url', 'result', 'image', 'imageUrl', 'output', 'data', 'download_url']) {
             const u = findUrl(obj[k]);
             if (u) return u;
         }
@@ -67,7 +57,7 @@ async function exec(sock, message) {
 
         await react(sock, message, '⏳');
 
-        const imgUrl = await uploadToImgbb(buffer);
+        const imgUrl = await uploadBuffer(buffer);
         const apiUrl = REMOVEBG_API + encodeURIComponent(imgUrl);
 
         const res = await axios.get(apiUrl, { responseType: 'arraybuffer', timeout: 60000 });

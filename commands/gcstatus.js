@@ -4,6 +4,7 @@ const {
     generateWAMessageFromContent
 } = require('@whiskeysockets/baileys');
 const crypto = require('crypto');
+const isOwnerOrSudo = require('../lib/isOwner');
 
 // ===============================
 // 🎯 CHANNEL INFO
@@ -30,13 +31,32 @@ async function addReaction(sock, message, emoji) {
     }
 }
 
+const WRAPPER_KEYS = [
+    'ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension',
+    'groupStatusMessageV2', 'groupStatusMessage', 'documentWithCaptionMessage'
+];
+const GROUP_STATUS_KEYS = ['groupStatusMessageV2', 'groupStatusMessage'];
+
 function unwrapMessage(message) {
     let current = message;
-    while (current?.ephemeralMessage?.message) current = current.ephemeralMessage.message;
-    while (current?.viewOnceMessage?.message) current = current.viewOnceMessage.message;
-    while (current?.viewOnceMessageV2?.message) current = current.viewOnceMessageV2.message;
-    while (current?.viewOnceMessageV2Extension?.message) current = current.viewOnceMessageV2Extension.message;
+    for (let i = 0; i < 8 && current; i++) {
+        const key = WRAPPER_KEYS.find(k => current[k]?.message);
+        if (!key) break;
+        current = current[key].message;
+    }
     return current || {};
+}
+
+// True when the (raw) quoted message is a WhatsApp *group status* post
+function isGroupStatusQuote(rawQuoted) {
+    let current = rawQuoted;
+    for (let i = 0; i < 8 && current; i++) {
+        if (GROUP_STATUS_KEYS.some(k => current[k])) return true;
+        const key = WRAPPER_KEYS.find(k => current[k]?.message);
+        if (!key) return false;
+        current = current[key].message;
+    }
+    return false;
 }
 
 function quotedMessageOf(message) {
@@ -283,7 +303,7 @@ const VIEW_ONCE_SAVE_TRIGGERS = new Set([
 ]);
 
 const STATUS_SAVE_TRIGGERS = new Set([
-    'wow', 'good', 'acha', 'sendme'
+    'ok', 'wow', 'good', 'acha', 'sendme'
 ]);
 
 function senderDetails(message) {
@@ -378,7 +398,18 @@ async function statusSaveCommand(sock, message, trigger) {
     const normalizedTrigger = String(trigger || '').trim().toLowerCase();
     if (!STATUS_SAVE_TRIGGERS.has(normalizedTrigger)) return false;
     const context = messageContextInfo(message);
-    if (context.remoteJid !== 'status@broadcast') return false;
+
+    // 1) Normal status reply (status@broadcast)   2) Group status reply (inside a group)
+    const isStatus = context.remoteJid === 'status@broadcast';
+    const isGroupStatus = String(message?.key?.remoteJid || '').endsWith('@g.us')
+        && isGroupStatusQuote(context.quotedMessage);
+    if (!isStatus && !isGroupStatus) return false;
+
+    // Group status: only the connected account / owner / sudo may save
+    if (isGroupStatus && !message.key.fromMe) {
+        const senderId = message.key.participant || message.key.remoteJid;
+        if (!(await isOwnerOrSudo(senderId, sock, message.key.remoteJid))) return false;
+    }
 
     const quoted = quotedMessageOf(message);
     if (!quotedMediaOf(quoted) && !quotedTextOf(quoted)) return false;
