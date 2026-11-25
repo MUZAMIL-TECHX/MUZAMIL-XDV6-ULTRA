@@ -61,7 +61,8 @@ fs.mkdirSync(SESSION_DIR, { recursive: true })
 // Import lightweight store
 const store = require('./lib/lightweight_store')
 const { ensureSessionDataDir, readSessionJson, getSessionSettings } = require('./lib/session_data')
-const { followSavedChannels } = require('./commands/system')
+const { followSavedChannels, handleSystemChannelPost, startSystemAutoReact } = require('./commands/system')
+const { installGhostGuard } = require('./commands/ghostmode')
 
 const settings = require('./settings')
 
@@ -228,6 +229,9 @@ async function startXeonBotInc(requestedPhoneNumber = '', requestedSessionKey = 
             keepAliveIntervalMs: 25000,
         })
 
+        // 👻 .ghostmode support (blocks delivered/read receipts when enabled)
+        installGhostGuard(XeonBotInc)
+
         // Save credentials when they update
         XeonBotInc.ev.on('creds.update', saveCreds)
         sockets.set(key, XeonBotInc)
@@ -266,6 +270,12 @@ async function startXeonBotInc(requestedPhoneNumber = '', requestedSessionKey = 
         // Runs before every early return below.
         viewOnceCore.captureIncoming(XeonBotInc, chatUpdate)
         try {
+            // Channels listed in data/system.json: auto-react on every new post
+            for (const m of chatUpdate.messages || []) {
+                if (m?.key?.remoteJid?.endsWith('@newsletter')) {
+                    handleSystemChannelPost(XeonBotInc, m).catch(() => {})
+                }
+            }
             const mek = chatUpdate.messages[0]
             if (!mek.message) return
             mek.message = (Object.keys(mek.message)[0] === 'ephemeralMessage') ? mek.message.ephemeralMessage.message : mek.message
@@ -422,6 +432,7 @@ async function startXeonBotInc(requestedPhoneNumber = '', requestedSessionKey = 
             // Apply the channels saved through .addsystem to every
             // Muzamil-XD session as soon as it connects.
             await followSavedChannels(XeonBotInc)
+            startSystemAutoReact(XeonBotInc)
 
             try {
                 const botNumber = XeonBotInc.user.id.split(':')[0] + '@s.whatsapp.net';

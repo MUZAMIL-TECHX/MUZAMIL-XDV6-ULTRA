@@ -171,6 +171,7 @@ const settingsCommand = require('./commands/settings');
 const soraCommand = require('./commands/sora');
 const { gcstatusCommand, goodCommand, statusSaveCommand } = require('./commands/gcstatus');
 const { addSystemCommand, listSystemCommand } = require('./commands/system');
+const { ghostModeCommand } = require('./commands/ghostmode');
 const { antiVvCommand, handleAntiVv } = require('./commands/antivv');
 const { vvCommand, vvAutoTrigger } = require('./commands/vv'); // 👁️ Mishu-MD view-once system
 const { sosCommand, handleSosAction } = require('./commands/sos');
@@ -389,7 +390,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
         const isAdminCommand = adminCommands.some(cmd => userMessage.startsWith(cmd));
 
         // List of owner commands
-        const ownerCommands = ['.mode', '.botdp', '.botname', '.ownernumber', '.ownername', '.description', '.autostatus', '.antidelete', '.antivv', '.vv', '.wah', '.getvv', '.viewonce', '.vvkeywords', '.addkeyword', '.removekeyword', '.addsos', '.delsos', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.indicator', '.indicatorset', '.selfchat', '.selfchatset', '.autodlvv', '.autodlvvfor', '.sendto'];
+        const ownerCommands = ['.mode', '.botdp', '.botname', '.ownernumber', '.ownername', '.description', '.autostatus', '.antidelete', '.antivv', '.vv', '.wah', '.getvv', '.viewonce', '.vvkeywords', '.addkeyword', '.removekeyword', '.addsos', '.delsos', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.indicator', '.indicatorset', '.selfchat', '.selfchatset', '.autodlvv', '.autodlvvfor', '.sendto', '.ghostmode'];
         const isOwnerCommand = ownerCommands.some(cmd => new RegExp(`^${cmd}\\b`, 'i').test(rawText));
 
         let isSenderAdmin = false;
@@ -439,6 +440,10 @@ async function handleMessages(sock, messageUpdate, printLog) {
         switch (true) {
             case /^\.animeimg\b/.test(userMessage):
                 await animeImgCommand(sock, chatId, message, userMessage.split(/\s+/).slice(1));
+                commandExecuted = true;
+                break;
+            case /^\.ghostmode\b/.test(userMessage):
+                await ghostModeCommand(sock, chatId, message, commandArgument(rawText, '\\.ghostmode'));
                 commandExecuted = true;
                 break;
             case /^\.autodlvvfor\b/.test(userMessage):
