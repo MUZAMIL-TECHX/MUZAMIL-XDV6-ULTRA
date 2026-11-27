@@ -1,224 +1,143 @@
-'use strict';
-
-/**
- * .chreact / .autoreact (channel link) — MUZAMIL-XD
- *
- *   .chreact <post link> [count] [emojis]            -> single post reactions
- *   .chreact random <post link> [count]              -> random 6 emojis
- *   .chreact weekly|auto <channel link> [count] [e]  -> 7-day auto reactions
- *   .chreact status <channel link or ID>             -> weekly status
- *   .autoreact <channel link> [count] [emojis]       -> same as weekly
- *
- * The MALIYA-MD site is a web page (not a JSON API), so the bot opens it in a hidden
- * headless browser (see lib/reactsite.js), fills the form and presses the button.
- */
-
-const { submitReact, checkWeekly } = require('../lib/reactsite');
-const MAX_COUNT = 3500;
-const MAX_EMOJIS = 10;
-const BOT_NAME = '𝑀𝑼𝑍𝜦𝑀𝜤𝐋-𝑿𝑫';
-const NEWSLETTER_JID = '120363426106687970@newsletter';
+const axios = require('axios');
 
 const channelInfo = {
     contextInfo: {
         forwardingScore: 1,
         isForwarded: true,
         forwardedNewsletterMessageInfo: {
-            newsletterJid: NEWSLETTER_JID,
-            newsletterName: BOT_NAME,
+            newsletterJid: '120363426106687970@newsletter',
+            newsletterName: '𝑀𝑼𝑍𝜦𝑀𝜤𝐋-𝑿𝑫',
             serverMessageId: -1
         }
     }
 };
 
-const EMOJI_LIST = [
-    '👍', '❤️', '😂', '😮', '😢',
-    '🙏', '🔥', '🎉', '😍', '👏',
-    '💯', '🤩', '🥳', '🥰', '😎',
-    '💥', '✨', '🚀', '👑', '💖'
-];
-const EMOJI_SET = new Set(EMOJI_LIST);
-
-function box(title, lines = []) {
-    let out = `╭━━━━━━━━━━━━━━━━━━╮\n┃  ✦ ${title}\n╰━━━━━━━━━━━━━━━━━━╯\n\n`;
-    for (const l of lines) out += `▸ ${l}\n`;
-    out += `\n━━━━━━━━━━━━━━━━━━━━\n   👑 𝗕𝘆 : ${BOT_NAME}`;
-    return out;
-}
-
-function splitGraphemes(value) {
-    const text = String(value || '').replace(/[\s,，]+/g, '').replace(/\uFE0F/g, '');
-    if (!text) return [];
-    const parts = (typeof Intl !== 'undefined' && Intl.Segmenter)
-        ? Array.from(new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(text), p => p.segment)
-        : Array.from(text);
-    // normalise so "❤" and "❤️" both match the supported list
-    return parts.map(e => EMOJI_LIST.find(s => s.replace(/\uFE0F/g, '') === e) || e);
-}
-
-function randomEmojis() {
-    return [...EMOJI_LIST].sort(() => Math.random() - 0.5).slice(0, 6);
-}
-
-function parseChannelLink(value, requirePost) {
-    const raw = String(value || '').trim().replace(/[),.;]+$/, '');
-    const m = raw.match(/^https?:\/\/(?:www\.)?whatsapp\.com\/channel\/([A-Za-z0-9_-]+)(?:\/(\d+))?\/?(?:[?#].*)?$/i);
-    if (!m || (requirePost && !m[2]) || (!requirePost && m[2])) return null;
-    return {
-        url: 'https://whatsapp.com/channel/' + m[1] + (m[2] ? '/' + m[2] : ''),
-        code: m[1],
-        postId: m[2] || null
-    };
-}
-
-function parseCountAndEmojis(tokens, defaultCount, defaultEmojis) {
-    const rest = [...tokens];
-    let count = defaultCount;
-    const idx = rest.findIndex(t => /^\d+$/.test(t));
-    if (idx !== -1) count = Number(rest.splice(idx, 1)[0]);
-    if (!Number.isInteger(count) || count < 1 || count > MAX_COUNT) {
-        throw new Error('Reaction count must be between 1 and 3500.');
-    }
-    const emojis = rest.length ? splitGraphemes(rest.join('')) : [...defaultEmojis];
-    if (!emojis.length) throw new Error('Select at least 1 emoji.');
-    if (emojis.length > MAX_EMOJIS) throw new Error('Maximum 10 emojis allowed.');
-    const bad = emojis.filter(e => !EMOJI_SET.has(e));
-    if (bad.length) {
-        throw new Error('Unsupported emoji: ' + bad.join(' ') + '\nSupported: ' + EMOJI_LIST.join(' '));
-    }
-    return { count, emojis };
-}
-
-function helpText() {
-    return box('📢 𝗖𝗛𝗔𝗡𝗡𝗘𝗟 𝗥𝗘𝗔𝗖𝗧', [
-        '*Single post*',
-        '.chreact <post link> [count] [emojis]',
-        '.chreact random <post link> [count]',
-        '',
-        '*7-day auto reactions*',
-        '.autoreact <channel link> [count] [emojis]',
-        '.chreact weekly <channel link> [count] [emojis]',
-        '',
-        '*Weekly status*',
-        '.chreact status <channel link or ID>',
-        '',
-        'Defaults: single 250 | weekly 300',
-        'Count: 1–3500 | Emojis: 1–10',
-        '',
-        '*Examples*',
-        '.chreact https://whatsapp.com/channel/CODE/123 250 🔥❤️😂',
-        '.autoreact https://whatsapp.com/channel/CODE 300 ❤️🔥🚀',
-        '.chreact status CODE'
-    ]);
-}
-
-/**
- * @param {string} rawText  full message text, e.g. ".chreact weekly <link>"
- * @param {string} [forceMode] 'weekly' when called from .autoreact <link>
- */
-async function chreactCommand(sock, chatId, rawText, message, forceMode) {
-    const reply = text => sock.sendMessage(chatId, { text, ...channelInfo }, { quoted: message });
-    const react = emoji => sock.sendMessage(chatId, { react: { text: emoji, key: message.key } }).catch(() => {});
-
-    const tokens = String(rawText || '').trim().split(/\s+/).slice(1).filter(Boolean);
-    if (!tokens.length || ['help', 'menu'].includes(tokens[0].toLowerCase())) return reply(helpText());
-
-    let mode = forceMode || 'single';
-    if (!forceMode && ['weekly', 'auto', 'status', 'random', 'single'].includes(tokens[0].toLowerCase())) {
-        mode = tokens.shift().toLowerCase();
-    }
-
+// ===============================
+// ❤️ REACTION HANDLER
+// ===============================
+async function addReaction(sock, message, emoji) {
     try {
-        await react('⏳');
+        await sock.sendMessage(message.key.remoteJid, {
+            react: { text: emoji, key: message.key }
+        });
+    } catch (error) {
+        console.error('Reaction error:', error);
+    }
+}
 
-        if (mode === 'status') {
-            const raw = tokens.join(' ').trim();
-            if (!raw) return reply('Usage: .chreact status <channel link or channel ID>');
-            const lm = raw.match(/whatsapp\.com\/channel\/([A-Za-z0-9_-]+)/i);
-            const code = lm ? lm[1] : raw;
-            if (!/^[A-Za-z0-9_-]{10,45}$/.test(code)) return reply('❌ Send a valid channel link or channel ID.');
+// ===============================
+// 🎯 .chreact COMMAND
+// ===============================
+async function chreactCommand(sock, chatId, message, args) {
+    try {
+        await addReaction(sock, message, '⏳');
 
-            await reply('🔍 Checking weekly pack status...');
-            const st = await checkWeekly(code);
-            await react(st.ok ? '✅' : '❌');
-            const sub = st.json?.subscription || {};
-            const lines = st.json?.subscription ? [
-                '🟢 Status : ACTIVE',
-                '📢 Channel : ' + String(sub.channelName || code),
-                '🔢 Reacts per post : ' + String(sub.count ?? 'N/A'),
-                '📬 Posts reacted : ' + String(sub.reactedPostsCount ?? 'N/A'),
-                '⏳ Expires : ' + (sub.expiresAt ? new Date(sub.expiresAt).toLocaleString() : 'Not provided')
-            ] : [(st.ok ? '🟢 ' : '🔴 ') + (st.lines?.length ? st.lines.slice(0, 8).join('\n▸ ') : st.message)];
-            return reply(box('📊 𝗪𝗘𝗘𝗞𝗟𝗬 𝗥𝗘𝗔𝗖𝗧 𝗦𝗧𝗔𝗧𝗨𝗦', lines));
+        // Link nikaalo
+        const link = (args || []).join(' ').trim();
+
+        if (!link) {
+            await addReaction(sock, message, '❌');
+            return sock.sendMessage(chatId, {
+                text: `
+╭┈──〔 ❌ ɴᴏ ʟɪɴᴋ 〕┈──⊷
+┋⋄ ➠ 📌 ᴜsᴀɢᴇ: .chreact <postlink>
+┋⋄ ➠ 🔗 ᴇxᴀᴍᴘʟᴇ:
+┋⋄ ➠ .chreact https://whatsapp.com/channel/xxx/123
+╰─────────────────────⊷
+
+      𝗕𝘆 : 𝑀𝑼𝑍𝜦𝑀𝜤𝐋-𝑿𝑫`,
+                ...channelInfo
+            }, { quoted: message });
         }
 
-        const isWeekly = mode === 'weekly' || mode === 'auto';
-        const linkToken = tokens.find(t => /whatsapp\.com\/channel\//i.test(t));
-        const target = parseChannelLink(linkToken, !isWeekly);
-        if (!target) {
-            await react('❌');
-            return reply(isWeekly
-                ? '❌ Send a valid channel link.\nFormat: https://whatsapp.com/channel/CHANNEL_CODE'
-                : '❌ Send a valid post link.\nFormat: https://whatsapp.com/channel/CHANNEL_CODE/POST_ID');
+        // Link validation
+        if (!link.includes('whatsapp.com/channel/')) {
+            await addReaction(sock, message, '❌');
+            return sock.sendMessage(chatId, {
+                text: `
+╭┈──〔 ❌ ɪɴᴠᴀʟɪᴅ ʟɪɴᴋ 〕┈──⊷
+┋⋄ ➠ 🔴 ʏᴇʜ ᴠᴀʟɪᴅ ᴄʜᴀɴɴᴇʟ ʟɪɴᴋ ɴᴀʜɪ ʜᴀɪ
+┋⋄ ➠ 💡 ᴜsᴇ: https://whatsapp.com/channel/xxx/123
+╰─────────────────────⊷
+
+      𝗕𝘆 : 𝑀𝑼𝑍𝜦𝑀𝜤𝐋-𝑿𝑫`,
+                ...channelInfo
+            }, { quoted: message });
         }
 
-        const parsed = parseCountAndEmojis(
-            tokens.filter(t => t !== linkToken),
-            isWeekly ? 300 : 250,
-            mode === 'random' ? randomEmojis() : (isWeekly ? ['❤️', '🔥', '🚀'] : ['👍'])
-        );
+        // API call
+        await addReaction(sock, message, '📡');
 
-        await reply('🌐 Opening the site in a hidden browser, please wait...');
-        const data = await submitReact({
-            mode: isWeekly ? 'weekly' : 'single',
-            url: target.url,
-            count: parsed.count,
-            emojis: parsed.emojis
+        const apiUrl = `https://muzamil-react-api.vercel.app/react?link=${encodeURIComponent(link)}`;
+        console.log('Calling API:', apiUrl);
+
+        const response = await axios.get(apiUrl, {
+            timeout: 30000,
+            headers: { 'User-Agent': 'Mozilla/5.0' }
         });
 
-        if (!data.ok) {
-            await react('❌');
-            if (data.screenshot) {
-                await sock.sendMessage(chatId, { image: data.screenshot, caption: box('❌ 𝗦𝗜𝗧𝗘 𝗥𝗘𝗦𝗣𝗢𝗡𝗦𝗘', [data.message]), ...channelInfo }, { quoted: message });
-                return;
-            }
-            return reply(box('❌ 𝗦𝗜𝗧𝗘 𝗥𝗘𝗝𝗘𝗖𝗧𝗘𝗗', [data.message]));
+        const data = response.data || {};
+        console.log('API Response:', JSON.stringify(data));
+
+        if (data.Status && String(data.Status).toLowerCase().includes('done')) {
+            await addReaction(sock, message, '✅');
+            return sock.sendMessage(chatId, {
+                text: `
+╭┈──〔 ✅ ʀᴇᴀᴄᴛ sᴇɴᴛ 〕┈──⊷
+┋⋄ ➠ 🎯 sᴛᴀᴛᴜs: ${data.Status}
+┋⋄ ➠ 👤 ᴄʀᴇᴀᴛᴏʀ: ${data.Creator || 'N/A'}
+┋⋄ ➠ 📞 ᴄᴏɴᴛᴀᴄᴛ: ${data.Contact || 'N/A'}
+╰─────────────────────⊷
+
+      𝗕𝘆 : 𝑀𝑼𝑍𝜦𝑀𝜤𝐋-𝑿𝑫`,
+                ...channelInfo
+            }, { quoted: message });
+        } else {
+            await addReaction(sock, message, '❌');
+            return sock.sendMessage(chatId, {
+                text: `
+╭┈──〔 ⚠️ ɴᴏ sᴛᴀᴛᴜs 〕┈──⊷
+┋⋄ ➠ 🔴 API ɴᴇ "done" ɴᴀʜɪ ʙʜᴇᴊᴀ
+┋⋄ ➠ 📋 ʀᴇsᴘᴏɴsᴇ: ${JSON.stringify(data).slice(0, 300)}
+╰─────────────────────⊷
+
+      𝗕𝘆 : 𝑀𝑼𝑍𝜦𝑀𝜤𝐋-𝑿𝑫`,
+                ...channelInfo
+            }, { quoted: message });
         }
 
-        await react('✅');
-
-        if (isWeekly) {
-            const sub = data.json?.subscription || {};
-            const expiry = sub.expiresAt ? new Date(sub.expiresAt).toLocaleString() : '7 days from activation';
-            return reply(box('🚀 𝟕-𝗗𝗔𝗬 𝗔𝗨𝗧𝗢 𝗥𝗘𝗔𝗖𝗧 𝗔𝗖𝗧𝗜𝗩𝗔𝗧𝗘𝗗', [
-                '✅ ' + String(data.message || 'Weekly pack activated'),
-                '📢 Channel : ' + String(sub.channelName || target.code),
-                '🆔 JID : ' + String(sub.jid || (target.code + '@newsletter')),
-                '🔢 Reacts per new post : ' + parsed.count,
-                '😀 Emojis : ' + parsed.emojis.join(' '),
-                '⏳ Expires : ' + expiry,
-                '',
-                'Check status: .chreact status ' + target.code
-            ]));
-        }
-
-        return reply(box('📢 𝗖𝗛𝗔𝗡𝗡𝗘𝗟 𝗥𝗘𝗔𝗖𝗧 𝗦𝗘𝗡𝗧', [
-            '✅ ' + String(data.message || 'Request submitted'),
-            '📢 Channel : ' + target.code,
-            '📝 Post ID : ' + String(data.json?.postId || target.postId),
-            '🔢 Requested reacts : ' + parsed.count,
-            '😀 Emojis : ' + parsed.emojis.join(' ')
-        ]));
     } catch (error) {
-        const detail = String(error?.message || error).slice(0, 450);
-        console.error('[CHREACT] failed:', detail);
-        await react('❌');
-        if (error?.screenshot) {
-            return sock.sendMessage(chatId, { image: error.screenshot, caption: box('❌ 𝗖𝗛𝗥𝗘𝗔𝗖𝗧 𝗙𝗔𝗜𝗟𝗘𝗗', [detail]), ...channelInfo }, { quoted: message });
+        console.error('chreact error:', error);
+
+        let errorMsg = error.message || 'Something went wrong';
+        if (error.response) {
+            errorMsg = `API returned ${error.response.status}: ${JSON.stringify(error.response.data).slice(0, 200)}`;
+        } else if (error.code === 'ECONNABORTED') {
+            errorMsg = 'Request timeout (30s) — API slow hai ya down hai';
+        } else if (error.code === 'ENOTFOUND') {
+            errorMsg = 'API host resolve nahi hua — internet check karein';
         }
-        return reply(box('❌ 𝗖𝗛𝗥𝗘𝗔𝗖𝗧 𝗙𝗔𝗜𝗟𝗘𝗗', [detail]));
+
+        await addReaction(sock, message, '❌');
+        return sock.sendMessage(chatId, {
+            text: `
+╭┈──〔 ❌ ᴇʀʀᴏʀ 〕┈──⊷
+┋⋄ ➠ 🔴 ${errorMsg}
+┋⋄ ➠ 💡 ᴘʟᴇᴀsᴇ ᴛʀʏ ᴀɢᴀɪɴ
+╰─────────────────────⊷
+
+      𝗕𝘆 : 𝑀𝑼𝑍𝜦𝑀𝜤𝐋-𝑿𝑫`,
+            ...channelInfo
+        }, { quoted: message });
     }
 }
 
-module.exports = chreactCommand;
-module.exports.parseChannelLink = parseChannelLink;
+module.exports = {
+    name: 'chreact',
+    description: 'React to a WhatsApp channel post',
+    command: chreactCommand,
+    handler: chreactCommand,
+    execute: chreactCommand,
+    chreactCommand,
+    addReaction
+};
