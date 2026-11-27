@@ -43,6 +43,8 @@
     "node-fetch": "^2.7.0",
     "node-id3": "^0.2.3",
     "node-webpmux": "^3.1.0",
+    "puppeteer-core": "^24.0.0",
+    "@sparticuz/chromium": "^138.0.0",
     "node-youtube-music": "^0.8.3",
     "pino": "^8.21.0",
     "ruhend-scraper": "^8.3.0",
