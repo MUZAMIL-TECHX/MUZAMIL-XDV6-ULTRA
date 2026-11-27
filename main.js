@@ -132,7 +132,8 @@ const { simpCommand } = require('./commands/simp');
 const { stupidCommand } = require('./commands/stupid');
 const stickerTelegramCommand = require('./commands/stickertelegram');
 const textmakerCommand = require('./commands/textmaker');
-const { handleAntideleteCommand, handleMessageRevocation, storeMessage } = require('./commands/antidelete');
+const { handleAntideleteCommand, handleAntideleteSetCommand, handleMessageRevocation, storeMessage } = require('./commands/antidelete');
+const { acceptAllCommand, rejectAllCommand } = require('./commands/joinrequests');
 const clearTmpCommand = require('./commands/cleartmp');
 const setProfilePicture = require('./commands/setpp');
 const getProfilePictureCommand = require('./commands/getpp');
@@ -223,7 +224,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
         }
 
         // Handle message revocation
-        if (message.message?.protocolMessage?.type === 0) {
+        if (message.message?.protocolMessage?.type === 0 || message.message?.protocolMessage?.type === 'REVOKE') {
             await handleMessageRevocation(sock, message);
             return;
         }
@@ -390,7 +391,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
         const isAdminCommand = adminCommands.some(cmd => userMessage.startsWith(cmd));
 
         // List of owner commands
-        const ownerCommands = ['.mode', '.botdp', '.botname', '.ownernumber', '.ownername', '.description', '.autostatus', '.antidelete', '.antivv', '.vv', '.wah', '.getvv', '.viewonce', '.vvkeywords', '.addkeyword', '.removekeyword', '.addsos', '.delsos', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.indicator', '.indicatorset', '.selfchat', '.selfchatset', '.autodlvv', '.autodlvvfor', '.sendto', '.ghostmode'];
+        const ownerCommands = ['.mode', '.botdp', '.botname', '.ownernumber', '.ownername', '.description', '.autostatus', '.antidelete', '.antideleteset', '.chreact', '.antivv', '.vv', '.wah', '.getvv', '.viewonce', '.vvkeywords', '.addkeyword', '.removekeyword', '.addsos', '.delsos', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.indicator', '.indicatorset', '.selfchat', '.selfchatset', '.autodlvv', '.autodlvvfor', '.sendto', '.ghostmode'];
         const isOwnerCommand = ownerCommands.some(cmd => new RegExp(`^${cmd}\\b`, 'i').test(rawText));
 
         let isSenderAdmin = false;
@@ -470,6 +471,24 @@ async function handleMessages(sock, messageUpdate, printLog) {
                 break;
             case userMessage.startsWith('.chreact'):
                 await chreactCommand(sock, chatId, rawText, message);
+                commandExecuted = true;
+                break;
+            // .autoreact <channel link> -> 7-day channel auto reactions
+            // (plain ".autoreact" without a channel link still toggles the global auto-reaction below)
+            case /^\.autoreact\s+\S*whatsapp\.com\/channel\//i.test(rawText):
+                await chreactCommand(sock, chatId, rawText, message, 'weekly');
+                commandExecuted = true;
+                break;
+            case /^\.antideleteset\b/.test(userMessage):
+                await handleAntideleteSetCommand(sock, chatId, message, commandArgument(rawText, '\\.antideleteset'));
+                commandExecuted = true;
+                break;
+            case /^\.accept\s?all\b/.test(userMessage):
+                await acceptAllCommand(sock, chatId, message, senderId);
+                commandExecuted = true;
+                break;
+            case /^\.reject\s?all\b/.test(userMessage):
+                await rejectAllCommand(sock, chatId, message, senderId);
                 commandExecuted = true;
                 break;
             case userMessage.startsWith('.antivv'):
