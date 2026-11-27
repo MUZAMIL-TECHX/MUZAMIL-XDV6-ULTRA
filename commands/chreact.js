@@ -32,7 +32,7 @@ async function chreactCommand(sock, chatId, message, args) {
     try {
         await addReaction(sock, message, '⏳');
 
-        // Link nikaalo
+        // Get the link
         const link = (args || []).join(' ').trim();
 
         if (!link) {
@@ -56,7 +56,7 @@ async function chreactCommand(sock, chatId, message, args) {
             return sock.sendMessage(chatId, {
                 text: `
 ╭┈──〔 ❌ ɪɴᴠᴀʟɪᴅ ʟɪɴᴋ 〕┈──⊷
-┋⋄ ➠ 🔴 ʏᴇʜ ᴠᴀʟɪᴅ ᴄʜᴀɴɴᴇʟ ʟɪɴᴋ ɴᴀʜɪ ʜᴀɪ
+┋⋄ ➠ 🔴 This is not a valid channel link
 ┋⋄ ➠ 💡 ᴜsᴇ: https://whatsapp.com/channel/xxx/123
 ╰─────────────────────⊷
 
@@ -97,7 +97,7 @@ async function chreactCommand(sock, chatId, message, args) {
             return sock.sendMessage(chatId, {
                 text: `
 ╭┈──〔 ⚠️ ɴᴏ sᴛᴀᴛᴜs 〕┈──⊷
-┋⋄ ➠ 🔴 API ɴᴇ "done" ɴᴀʜɪ ʙʜᴇᴊᴀ
+┋⋄ ➠ 🔴 API did not return "done"
 ┋⋄ ➠ 📋 ʀᴇsᴘᴏɴsᴇ: ${JSON.stringify(data).slice(0, 300)}
 ╰─────────────────────⊷
 
@@ -113,9 +113,9 @@ async function chreactCommand(sock, chatId, message, args) {
         if (error.response) {
             errorMsg = `API returned ${error.response.status}: ${JSON.stringify(error.response.data).slice(0, 200)}`;
         } else if (error.code === 'ECONNABORTED') {
-            errorMsg = 'Request timeout (30s) — API slow hai ya down hai';
+            errorMsg = 'Request timeout (30s) — API is slow or down';
         } else if (error.code === 'ENOTFOUND') {
-            errorMsg = 'API host resolve nahi hua — internet check karein';
+            errorMsg = 'API host could not be resolved — check your internet';
         }
 
         await addReaction(sock, message, '❌');
